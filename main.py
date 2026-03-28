@@ -181,24 +181,24 @@ def calculate_formation_force(pos, all_positions, agent_index):
         if d_des > 0:
             diff = pos - other_pos
             dist = np.linalg.norm(diff)
-            if dist > D:
-                if dist > 0.001:
-                    error = dist - d_des
 
-                    if abs(error) <= HUBER_DELTA:
-                        force_mag = -(K_FORM/2.0) * error
-                    else:
-                        force_mag = -(K_FORM/2.0) * HUBER_DELTA * np.sign(error)
-                    force += force_mag * (diff / dist)
-            else:
-                if dist > 0.001:
-                    error = dist - d_des
+            if dist > 0.001:
+                error = dist - d_des
 
-                    if abs(error) <= HUBER_DELTA:
-                        force_mag = -K_FORM * error
-                    else:
-                        force_mag = -K_FORM * HUBER_DELTA * np.sign(error)
-                    force += force_mag * (diff / dist)
+                # Scegliamo il guadagno in base al tipo di link (perimetro vs diagonale)
+                # Usiamo D + 0.05 come piccola tolleranza per gli arrotondamenti dei float
+                if d_des > D + 0.05:
+                    current_k = K_FORM / 2.0  # Diagonale: molla debole
+                else:
+                    current_k = K_FORM  # Perimetro: molla forte
+
+                # Applichiamo Huber in modo pulito usando il guadagno scelto
+                if abs(error) <= HUBER_DELTA:
+                    force_mag = -current_k * error
+                else:
+                    force_mag = -current_k * HUBER_DELTA * np.sign(error)
+
+                force += force_mag * (diff / dist)
 
     return force
 
