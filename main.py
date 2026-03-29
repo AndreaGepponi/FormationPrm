@@ -7,9 +7,8 @@ from matplotlib.widgets import Button
 
 matplotlib.use('TkAgg')
 
-# ==========================================
 # Parametri del Sistema
-# ==========================================
+
 NUM_AGENTS = 7
 ALPHA =((NUM_AGENTS-3)*180)/(NUM_AGENTS - 1)
 A = [ALPHA]
@@ -37,7 +36,7 @@ OBS_INFLUENCE = 0.8
 HUBER_DELTA = 1.0
 DANGER_OBS = 0.5
 
-# Parametri dell'Orbita Circolare
+# Parametri orbita
 CIRC_CENTER_IDX = 0
 SATELLITE_IDX = list(range(1, NUM_AGENTS))
 
@@ -66,10 +65,7 @@ def generate_safe_position(x_min, x_max, y_min, y_max, margin=0.5):
             return pos
 
 
-# ==========================================
 # Inizializzazione
-# ==========================================
-#TARGET = generate_safe_position(X_MIN + 1, X_MAX - 1, Y_MIN + 1, Y_MAX - 1)
 TARGET = [1, 1]
 TARGET_SPEED = 0.0
 theta = np.random.uniform(0, 2 * np.pi)
@@ -88,7 +84,6 @@ for index in range(0, NUM_AGENTS):
 P = np.array(Pos)
 positions = P
 
-#Distances = np.zeros((NUM_AGENTS,NUM_AGENTS))
 CONNECTIONS = []
 
 #Calcolo angoli
@@ -127,7 +122,7 @@ def bound(new_positions):
     DESIRED_DISTANCES.fill(0)
     CONNECTIONS.clear()
 
-    # 1. Trova l'angolo di ogni satellite rispetto all'Agente 0 (centro)
+    #Trova l'angolo di ogni satellite rispetto al centro
     center_pos = new_positions[0]
     angles = []
 
@@ -137,42 +132,37 @@ def bound(new_positions):
         angle = math.atan2(diff[1], diff[0])
         angles.append((i, angle))
 
-    # 2. Ordina i satelliti in base all'angolo (senso antiorario)
+    #Ordina i satelliti in base all'angolo (antiorario)
     angles.sort(key=lambda x: x[1])
     sorted_indices = [item[0] for item in angles]
 
-    # 3. Assegna i vincoli
+    #Assegna vincoli
     num_sat = len(sorted_indices)
 
     for k in range(num_sat):
         sat_A = sorted_indices[k]
-        # Il prossimo satellite nell'anello (con % num_sat per chiudere il cerchio)
+
         sat_B = sorted_indices[(k + 1) % num_sat]
 
         # Assegna la distanza tra i vicini dell'anello
         DESIRED_DISTANCES[sat_A, sat_B] = dist[1]
         DESIRED_DISTANCES[sat_B, sat_A] = dist[1]
 
-        # --- OPZIONALE: Diagonali interne ---
-        # Se vuoi che mantengano rigidamente la forma dell'esagono/ettagono,
-        # devi assegnare anche le distanze tra satelliti non adiacenti.
-        # Usa il vettore 'dist' che hai calcolato abilmente in inizializzazione!
         for step in range(2, num_sat // 2 + 1):
             if step < len(dist):  # Evita index out of range
                 sat_C = sorted_indices[(k + step) % num_sat]
                 DESIRED_DISTANCES[sat_A, sat_C] = dist[step]
                 DESIRED_DISTANCES[sat_C, sat_A] = dist[step]
 
-    # 4. Aggiorna la lista delle connessioni per la grafica
+    #Aggiorna lista connessioni per la grafica
     for i in range(NUM_AGENTS):
         for j in range(i + 1, NUM_AGENTS):
             if DESIRED_DISTANCES[i, j] > 0:
                 CONNECTIONS.append((i, j))
 
 
-# ==========================================
+
 # Funzioni di Controllo
-# ==========================================
 def calculate_formation_force(pos, all_positions, agent_index):
     force = np.zeros(2)
     for j, other_pos in enumerate(all_positions):
@@ -185,14 +175,12 @@ def calculate_formation_force(pos, all_positions, agent_index):
             if dist > 0.001:
                 error = dist - d_des
 
-                # Scegliamo il guadagno in base al tipo di link (perimetro vs diagonale)
-                # Usiamo D + 0.05 come piccola tolleranza per gli arrotondamenti dei float
-                if d_des > D + 0.05:
-                    current_k = K_FORM / 2.0  # Diagonale: molla debole
-                else:
-                    current_k = K_FORM  # Perimetro: molla forte
 
-                # Applichiamo Huber in modo pulito usando il guadagno scelto
+                if d_des > D + 0.05:
+                    current_k = K_FORM / 2.0  # Diagonale: debole
+                else:
+                    current_k = K_FORM  # Perimetro: forte
+
                 if abs(error) <= HUBER_DELTA:
                     force_mag = -current_k * error
                 else:
@@ -207,27 +195,22 @@ def calculate_circular_orbit_force(pos, center_pos, radius):
     diff = pos - center_pos
     dist = np.linalg.norm(diff)
 
-    # Prevenzione singolarità (se il satellite è esattamente al centro)
+    # Prevenzione singolarità (se satellite esattamente al centro)
     if dist < 0.001:
         return np.random.rand(2) * 0.1
 
-    # Calcolo dell'errore:
-    # Positivo = l'agente è ESTERNO all'orbita (dist > radius)
-    # Negativo = l'agente è INTERNO all'orbita (dist < radius)
     error = dist - radius
 
     if error > 0:
-        current_k = K_CIRC_OUT  # Parete ripida
+        current_k = K_CIRC_OUT
     else:
-        current_k = K_CIRC_IN  # Parete dolce
+        current_k = K_CIRC_IN
 
-    # Applichiamo il potenziale Huber-like usando il guadagno scelto
     if abs(error) <= HUBER_DELTA:
         force_mag = -current_k * error
     else:
         force_mag = -current_k * HUBER_DELTA * np.sign(error)
 
-    # Moltiplichiamo l'intensità per il versore direzione
     return force_mag * (diff / dist)
 
 
@@ -263,10 +246,7 @@ def limit_speed(velocity, max_speed):
         velocity = (velocity / speed) * max_speed
     return velocity
 
-
-# ==========================================
-# Setup Grafico
-# ==========================================
+#Grafica
 fig, ax = plt.subplots(figsize=(8, 8))
 fig.subplots_adjust(bottom=0.15)
 ax.set_xlim(X_MIN - 1, X_MAX + 1)
@@ -274,7 +254,6 @@ ax.set_ylim(Y_MIN - 1, Y_MAX + 1)
 ax.set_title("Formazione con satelliti")
 ax.grid(True)
 
-#ax.plot([X_MIN, X_MAX, X_MAX, X_MIN, X_MIN], [Y_MIN, Y_MIN, Y_MAX, Y_MAX, Y_MIN], 'k--', lw=1)
 
 for ox, oy, orad in OBSTACLES:
     circle = plt.Circle((ox, oy), orad, color='gray', alpha=0.5)
@@ -282,24 +261,20 @@ for ox, oy, orad in OBSTACLES:
 
 target_plot, = ax.plot(TARGET[0], TARGET[1], 'rX', markersize=12, label="Target")
 scat = ax.scatter(positions[:, 0], positions[:, 1], c='b', s=100, zorder=4, label="Agenti")
-# Creiamo un numero massimo sufficiente di linee (es. Tutte le combinazioni possibili)
 MAX_LINKS = NUM_AGENTS * (NUM_AGENTS - 1) // 2
 graph_lines = [ax.plot([], [], 'k-', lw=2, zorder=2)[0] for _ in range(MAX_LINKS)]
-#ax.legend(loc='upper right')
 
-# Definisci una variabile globale per lo stato di visibilità (True = visibili, False = nascosti)
 show_links = False
 
-# Crea un "asse" dedicato al pulsante [posizione_X, posizione_Y, larghezza, altezza]
+#Posizione pulsante
 ax_button = plt.axes((0.1, 0.9, 0.25, 0.06))
 btn_links = Button(ax_button, 'Toggle Vincoli')
 
-# Funzione che viene chiamata quando premi il pulsante
 def toggle_visibility(event):
     global show_links
-    show_links = not show_links # Inverte lo stato (da True a False e viceversa)
+    show_links = not show_links
 
-# Collega il click del mouse alla funzione
+# Collega click del mouse alla funzione
 btn_links.on_clicked(toggle_visibility)
 
 def update(frame):
@@ -309,7 +284,6 @@ def update(frame):
         t += 1
         TARGET = T[t % len(T)]
         bound(positions)
-        #TARGET = generate_safe_position(X_MIN + 1, X_MAX - 1, Y_MIN + 1, Y_MAX - 1)
 
     angle_noise = np.random.uniform(-0.2, 0.2)
     c, s = np.cos(angle_noise), np.sin(angle_noise)
@@ -331,7 +305,7 @@ def update(frame):
 
     target_plot.set_data([TARGET[0]], [TARGET[1]])
 
-    # 2. Agenti e Forze
+    # Agenti e Forze
 
     new_positions = np.copy(positions)
 
@@ -350,7 +324,6 @@ def update(frame):
     agent_colors = []
 
     for i in range(NUM_AGENTS):
-        # Inizializza a zero
         f_circ = np.zeros(2)
         f_global = np.zeros(2)
 
@@ -359,14 +332,10 @@ def update(frame):
         f_form = calculate_formation_force(positions[i], positions, i)
 
         if i in SATELLITE_IDX:
-            # L'Agente Satellite è guidato dalla funzione circolare rispetto all'Agente 1
             f_circ = calculate_circular_orbit_force(positions[i], positions[CIRC_CENTER_IDX], CIRC_RADIUS)
             total_force = f_global + f_form + f_circ + f_rep + f_obs
             velocity = limit_speed(total_force, MAX_SPEED) * 2
-            # NOTA: Non riceve la spinta 'f_target_global'.
-            # Viene trascinato indirettamente perché segue l'Agente 1 che si sposta!
         else:
-            # Gli agenti normali ricevono forza di formazione e spinta verso il target
             f_global = f_target_global
             total_force = f_global + f_form + f_circ + f_rep + f_obs
             velocity = limit_speed(total_force, MAX_SPEED)
@@ -380,17 +349,12 @@ def update(frame):
 
     positions = new_positions
 
-    # 3. Grafica
+    # Grafica
     scat.set_offsets(positions)
     scat.set_color(agent_colors)
 
-    # Sposta l'anello verde in modo che segua costantemente l'Agente 1
-    #orbit_patch.center = (positions[CIRC_CENTER_IDX][0], positions[CIRC_CENTER_IDX][1])
-
-    # 3. Aggiornamento delle linee dinamiche
     global show_links
     for idx, line in enumerate(graph_lines):
-        # Se c'è una connessione attiva per questo indice, disegnala
         if show_links and idx < len(CONNECTIONS):
             i, j = CONNECTIONS[idx]
             p_i = positions[i]
@@ -398,7 +362,6 @@ def update(frame):
             line.set_data([p_i[0], p_j[0]], [p_i[1], p_j[1]])
             line.set_color('black')
         else:
-            # Se la linea non serve in questo frame, nascondila
             line.set_data([], [])
 
     return [scat, target_plot] + graph_lines
