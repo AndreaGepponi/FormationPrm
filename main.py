@@ -12,7 +12,7 @@ matplotlib.use('TkAgg')
 # ==========================================
 # Parametri del Sistema
 # ==========================================
-NUM_AGENTS = 7
+NUM_AGENTS = 6
 ALPHA = ((NUM_AGENTS - 3) * 180) / (NUM_AGENTS - 1)
 A = [ALPHA]
 
@@ -77,8 +77,7 @@ NUM_OBSTACLES = 6
 OBSTACLES = generate_random_obstacles(NUM_OBSTACLES)
 
 
-def generate_safe_position(margin=1.5):
-    """Genera coordinate casuali assicurandosi che non cadano dentro gli ostacoli appena creati."""
+def generate_safe_position(margin):
     while True:
         # Genera un punto distante dai bordi della mappa
         pt = np.random.uniform([X_MIN + margin, Y_MIN + margin], [X_MAX - margin, Y_MAX - margin])
@@ -133,6 +132,8 @@ def generate_prm(start, goal, num_samples=250, k_neighbors=8):
     print("Generazione PRM in corso...")
     samples = [start, goal]
 
+    # Generazione nodi
+
     while len(samples) < num_samples + 2:
         pt = np.random.uniform([X_MIN, Y_MIN], [X_MAX, Y_MAX])
         safe = True
@@ -142,6 +143,8 @@ def generate_prm(start, goal, num_samples=250, k_neighbors=8):
                 break
         if safe:
             samples.append(pt.tolist())
+
+    # Generazione grafo
 
     graph = {i: [] for i in range(len(samples))}
     for i in range(len(samples)):
@@ -153,11 +156,12 @@ def generate_prm(start, goal, num_samples=250, k_neighbors=8):
         distances.sort(key=lambda x: x[1])
 
         for j, d in distances[:k_neighbors]:
-            collision = any(
-                line_intersects_rect(samples[i], samples[j], ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES)
+            collision = any(line_intersects_rect(samples[i], samples[j], ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES)
             if not collision:
                 graph[i].append((j, d))
                 graph[j].append((i, d))
+
+    # Calcolo percorso
 
     queue = [(0, 0)]
     distances = {i: float('inf') for i in range(len(samples))}
@@ -174,6 +178,8 @@ def generate_prm(start, goal, num_samples=250, k_neighbors=8):
                 distances[neighbor] = cost
                 parents[neighbor] = curr
                 heapq.heappush(queue, (cost, neighbor))
+
+    # Ricostruzione percorso trovato
 
     path = []
     curr = 1
@@ -407,7 +413,7 @@ def update(frame):
             t_idx += 1
             if t_idx < len(T):
                 TARGET = np.array(T[t_idx], dtype=float)
-                bound(positions)  # Opzionale: ricalcola la topologia ad ogni nuovo nodo
+                bound(positions)  # Ricalcola la topologia
 
     target_plot.set_data([TARGET[0]], [TARGET[1]])
 
