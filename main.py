@@ -195,11 +195,26 @@ TARGET = np.array(T[t_idx], dtype=float)
 # Inizializzazione Formazione
 # ==========================================
 safe_center = list(START_POS)
-Pos = []
-for index in range(0, NUM_AGENTS):
-    x = math.cos(math.radians(index * 360 / (NUM_AGENTS - 1)))
-    y = math.sin(math.radians(index * 360 / (NUM_AGENTS - 1)))
-    p = [round(safe_center[0] + CIRC_RADIUS / 2 * x, 2), round(safe_center[1] + CIRC_RADIUS / 2 * y, 2)]
+
+# L'Agente 0 (leader/centro) nasce ESATTAMENTE sul punto di partenza sicuro
+Pos = [safe_center]
+
+# Definiamo il raggio massimo entro cui i satelliti possono nascere.
+# Avendo impostato margin=2.5 nella generazione di START_POS,
+# usare un raggio di 2.0 ci garantisce che non nascano dentro i muri!
+SPAWN_RADIUS = 2.0
+
+for i in range(1, NUM_AGENTS):
+    # Genera un angolo casuale in radianti (da 0 a 2*Pi)
+    angle = np.random.uniform(0, 2 * math.pi)
+
+    # Genera una distanza casuale dal centro.
+    # Usiamo la radice quadrata per distribuire i satelliti in modo uniforme
+    # in tutta l'area del cerchio, evitando che si ammassino tutti esattamente al centro.
+    r = SPAWN_RADIUS * math.sqrt(np.random.uniform(0, 1))
+
+    p = [round(safe_center[0] + r * math.cos(angle), 2),
+         round(safe_center[1] + r * math.sin(angle), 2)]
     Pos.append(p)
 
 positions = np.array(Pos)
