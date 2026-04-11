@@ -12,7 +12,7 @@ matplotlib.use('TkAgg')
 # ==========================================
 # Parametri del Sistema
 # ==========================================
-NUM_AGENTS = 6
+NUM_AGENTS = 7
 ALPHA = ((NUM_AGENTS - 3) * 180) / (NUM_AGENTS - 1)
 A = [ALPHA]
 
@@ -263,7 +263,13 @@ def bound(new_positions):
         DESIRED_DISTANCES[sat_A, sat_B] = dist[1]
         DESIRED_DISTANCES[sat_B, sat_A] = dist[1]
 
-        for step in range(2, num_sat // 2 + 1):
+        MAX_DIAG_STEPS = 3  # Quanti "livelli" di diagonali calcolare
+
+        # Calcoliamo il limite: prende il valore più piccolo tra la topologia
+        # completa (num_sat // 2 + 1) e il nostro limite imposto (2 + MAX_DIAG_STEPS)
+        limit_step = min(num_sat // 2 + 1, 2 + MAX_DIAG_STEPS)
+
+        for step in range(2, limit_step):
             if step < len(dist):
                 sat_C = sorted_indices[(k + step) % num_sat]
                 DESIRED_DISTANCES[sat_A, sat_C] = dist[step]
@@ -286,14 +292,23 @@ def calculate_formation_force(pos, all_positions, agent_index):
     for j, other_pos in enumerate(all_positions):
         if j == agent_index: continue
         d_des = DESIRED_DISTANCES[agent_index, j]
+
         if d_des > 0:
             diff = pos - other_pos
             dist = np.linalg.norm(diff)
 
             if dist > 0.001:
                 error = dist - d_des
-                current_k = (K_FORM / 2.0) if d_des > D + 0.05 else K_FORM
 
+                # --- NOVITÀ: Rigidità inversamente proporzionale alla lunghezza ---
+                # Moltiplichiamo K_FORM per (D / d_des).
+                # - Se è un lato del perimetro (d_des == D), il rapporto è 1.0 (forza piena).
+                # - Se è una diagonale lunga il doppio, il rapporto è 0.5 (forza dimezzata).
+                # Usiamo min(1.0, ...) come misura di sicurezza per le fluttuazioni dei float,
+                # garantendo che la molla non diventi mai più rigida di K_FORM.
+                current_k = K_FORM * min(1.0, (D / d_des))
+
+                # Applichiamo il potenziale di Huber usando il nuovo guadagno dinamico
                 if abs(error) <= HUBER_DELTA:
                     force_mag = -current_k * error
                 else:
