@@ -45,8 +45,7 @@ SATELLITE_IDX = list(range(1, NUM_AGENTS))
 X_MIN, X_MAX = 0.0, 15.0
 Y_MIN, Y_MAX = 0.0, 15.0
 
-START_POS = [1.5, 1.5]
-GOAL_POS = [13.5, 13.5]
+MIN_START_GOAL_DIST = 10.0
 
 
 # ==========================================
@@ -60,11 +59,6 @@ def generate_random_obstacles(num_obs):
         x = np.random.uniform(X_MIN + 1, X_MAX - w - 1)
         y = np.random.uniform(Y_MIN + 1, Y_MAX - h - 1)
 
-        # Evita che gli ostacoli nascano sopra la partenza o l'arrivo
-        rect_center = np.array([x + w / 2, y + h / 2])
-        if np.linalg.norm(rect_center - np.array(START_POS)) < 3.0 or \
-                np.linalg.norm(rect_center - np.array(GOAL_POS)) < 3.0:
-            continue
 
         # Evita la compenetrazione tra gli ostacoli
         overlap = False
@@ -82,6 +76,34 @@ def generate_random_obstacles(num_obs):
 NUM_OBSTACLES = 6
 OBSTACLES = generate_random_obstacles(NUM_OBSTACLES)
 
+
+def generate_safe_position(margin=1.5):
+    """Genera coordinate casuali assicurandosi che non cadano dentro gli ostacoli appena creati."""
+    while True:
+        # Genera un punto distante dai bordi della mappa
+        pt = np.random.uniform([X_MIN + margin, Y_MIN + margin], [X_MAX - margin, Y_MAX - margin])
+        safe = True
+        for (ox, oy, ow, oh) in OBSTACLES:
+            # Controlla se il punto cade nel rettangolo (allargato dal margine di sicurezza)
+            if (ox - margin) <= pt[0] <= (ox + ow + margin) and (oy - margin) <= pt[1] <= (oy + oh + margin):
+                safe = False
+                break
+        if safe:
+            return pt.tolist()
+
+
+START_POS = generate_safe_position(margin=2.5)
+
+while True:
+    candidate_goal = generate_safe_position(margin=1.5)
+
+    # Calcola la distanza tra il candidato e la partenza appena creata
+    dist_to_start = np.linalg.norm(np.array(candidate_goal) - np.array(START_POS))
+
+    # Se la distanza è maggiore o uguale al minimo, accetta il punto e interrompi il ciclo
+    if dist_to_start >= MIN_START_GOAL_DIST:
+        GOAL_POS = candidate_goal
+        break
 
 # ==========================================
 # Funzioni Geometriche
