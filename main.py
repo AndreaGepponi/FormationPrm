@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.patches as patches
 from matplotlib.widgets import Button
+import networkx as nx
 
 matplotlib.use('TkAgg')
 
@@ -47,6 +48,7 @@ Y_MIN, Y_MAX = 0.0, 15.0
 
 MIN_START_GOAL_DIST = 10.0
 
+MAX_DIAG_STEPS = 3  # Quanti "livelli" di diagonali calcolare
 
 # ==========================================
 # Generazione Ostacoli Casuali
@@ -92,6 +94,7 @@ def generate_safe_position(margin):
 
 
 START_POS = generate_safe_position(margin=2.5)
+print('Generato punto di inizio')
 
 while True:
     candidate_goal = generate_safe_position(margin=1.5)
@@ -102,6 +105,7 @@ while True:
     # Se la distanza è maggiore o uguale al minimo, accetta il punto e interrompi il ciclo
     if dist_to_start >= MIN_START_GOAL_DIST:
         GOAL_POS = candidate_goal
+        print('Generato punto di arrivo')
         break
 
 # ==========================================
@@ -132,8 +136,7 @@ def generate_prm(start, goal, num_samples=250, k_neighbors=8):
     print("Generazione PRM in corso...")
     samples = [start, goal]
 
-    # Generazione nodi
-
+    # Campionamento
     while len(samples) < num_samples + 2:
         pt = np.random.uniform([X_MIN, Y_MIN], [X_MAX, Y_MAX])
         safe = True
@@ -144,9 +147,14 @@ def generate_prm(start, goal, num_samples=250, k_neighbors=8):
         if safe:
             samples.append(pt.tolist())
 
-    # Generazione grafo
+    # Costruzione del Grafo
+    G = nx.Graph()
 
-    graph = {i: [] for i in range(len(samples))}
+    # Aggiunge tutti i nodi
+    for i in range(len(samples)):
+        G.add_node(i, pos=samples[i])
+
+    # Aggiunge gli archi (connessioni)
     for i in range(len(samples)):
         distances = []
         for j in range(len(samples)):
@@ -156,38 +164,27 @@ def generate_prm(start, goal, num_samples=250, k_neighbors=8):
         distances.sort(key=lambda x: x[1])
 
         for j, d in distances[:k_neighbors]:
-            collision = any(line_intersects_rect(samples[i], samples[j], ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES)
-            if not collision:
-                graph[i].append((j, d))
-                graph[j].append((i, d))
+            # Evita di ricalcolare le collisioni se l'arco è già stato aggiunto (es. da j verso i)
+            if not G.has_edge(i, j):
+                collision = any(
+                    line_intersects_rect(samples[i], samples[j], ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES)
+                if not collision:
+                    # Aggiunge l'arco specificando il "peso" (la distanza fisica)
+                    G.add_edge(i, j, weight=d)
 
-    # Calcolo percorso
+    # 3. Ricerca del percorso più breve con NetworkX
+    try:
+        # NetworkX usa Dijkstra internamente per trovare il percorso basato sul 'weight'
+        path_indices = nx.shortest_path(G, source=0, target=1, weight='weight')
 
-    queue = [(0, 0)]
-    distances = {i: float('inf') for i in range(len(samples))}
-    distances[0] = 0
-    parents = {i: None for i in range(len(samples))}
+        # Mappa gli indici restituiti nelle coordinate effettive
+        path = [samples[i] for i in path_indices]
+        print(f"PRM Trovato! Nodi: {len(path)}")
 
-    while queue:
-        curr_cost, curr = heapq.heappop(queue)
-        if curr == 1:
-            break
-        for neighbor, weight in graph[curr]:
-            cost = curr_cost + weight
-            if cost < distances[neighbor]:
-                distances[neighbor] = cost
-                parents[neighbor] = curr
-                heapq.heappush(queue, (cost, neighbor))
-
-    # Ricostruzione percorso trovato
-
-    path = []
-    curr = 1
-    while curr is not None:
-        path.append(samples[curr])
-        curr = parents[curr]
-    path.reverse()
-    print(f"PRM Trovato! Nodi: {len(path)}")
+    except nx.NetworkXNoPath:
+        # Gestione elegante dell'errore se il traguardo è irraggiungibile
+        print("ERRORE: Nessun percorso valido trovato! Restituisco linea retta di emergenza.")
+        path = [start, goal]
     return path, samples
 
 
@@ -263,7 +260,7 @@ def bound(new_positions):
         DESIRED_DISTANCES[sat_A, sat_B] = dist[1]
         DESIRED_DISTANCES[sat_B, sat_A] = dist[1]
 
-        MAX_DIAG_STEPS = 3  # Quanti "livelli" di diagonali calcolare
+
 
         # Calcoliamo il limite: prende il valore più piccolo tra la topologia
         # completa (num_sat // 2 + 1) e il nostro limite imposto (2 + MAX_DIAG_STEPS)
