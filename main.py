@@ -1,5 +1,4 @@
 import math
-import heapq
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -7,17 +6,23 @@ import matplotlib.animation as animation
 import matplotlib.patches as patches
 from matplotlib.widgets import Button
 import networkx as nx
+from matplotlib.collections import LineCollection
 
 matplotlib.use('TkAgg')
 
 # ==========================================
 # Parametri del Sistema
 # ==========================================
-NUM_AGENTS = 7
+NUM_AGENTS = 10
+
+# 7 è considerato il numero standard. Non scala mai sotto l'1.0.
+SCALE_FACTOR = max(1.0, NUM_AGENTS / 7.0)
+
 ALPHA = ((NUM_AGENTS - 3) * 180) / (NUM_AGENTS - 1)
 A = [ALPHA]
 
-CIRC_RADIUS = 1.5
+# Il raggio si scala dinamicamente
+CIRC_RADIUS = 1.5 * SCALE_FACTOR
 D = 2 * CIRC_RADIUS * np.sin(np.deg2rad(180 / (NUM_AGENTS - 1)))
 DESIRED_DISTANCES = np.zeros((NUM_AGENTS, NUM_AGENTS))
 
@@ -28,11 +33,11 @@ MAX_STEPS = 2000
 MAX_SPEED = 2.5
 
 # Guadagni e Raggi
-K_TARGET = 1.5
-K_FORM = 1.5
-K_REP = 2.0
-K_OBS = 5.0
-K_CIRC_OUT = 4.0
+K_TARGET = 1.5 * SCALE_FACTOR
+K_FORM = 1.5 * SCALE_FACTOR
+K_REP = 2.0 * SCALE_FACTOR
+K_OBS = 5.0 * SCALE_FACTOR
+K_CIRC_OUT = 4.0 * SCALE_FACTOR
 K_CIRC_IN = 1.0
 
 REP_RADIUS = 1.0
@@ -43,12 +48,16 @@ DANGER_OBS = 0.5
 CIRC_CENTER_IDX = 0
 SATELLITE_IDX = list(range(1, NUM_AGENTS))
 
-X_MIN, X_MAX = 0.0, 15.0
-Y_MIN, Y_MAX = 0.0, 15.0
+# I limiti dell'immagine/mappa si scalano dinamicamente
+X_MIN, X_MAX = 0.0, 15.0 * SCALE_FACTOR
+Y_MIN, Y_MAX = 0.0, 15.0 * SCALE_FACTOR
 
-MIN_START_GOAL_DIST = 10.0
+# Anche la distanza minima e il numero di ostacoli possono beneficiare di uno scaling
+MIN_START_GOAL_DIST = 10.0 * SCALE_FACTOR
+NUM_OBSTACLES = 7
 
-MAX_DIAG_STEPS = 3  # Quanti "livelli" di diagonali calcolare
+MAX_DIAG_STEPS = int(2 * SCALE_FACTOR)
+TOPOLOGY_UPDATE_INTERVAL = 60
 
 # ==========================================
 # Generazione Ostacoli Casuali
@@ -56,13 +65,15 @@ MAX_DIAG_STEPS = 3  # Quanti "livelli" di diagonali calcolare
 def generate_random_obstacles(num_obs):
     obstacles = []
     while len(obstacles) < num_obs:
-        w = np.random.uniform(1.5, 3.0)
-        h = np.random.uniform(1.5, 3.0)
-        x = np.random.uniform(X_MIN + 1, X_MAX - w - 1)
-        y = np.random.uniform(Y_MIN + 1, Y_MAX - h - 1)
+        # Dimensioni degli ostacoli scalate proporzionalmente
+        w = np.random.uniform(1.5 * SCALE_FACTOR, 3.0 * SCALE_FACTOR)
+        h = np.random.uniform(1.5 * SCALE_FACTOR, 3.0 * SCALE_FACTOR)
 
+        # Manteniamo un margine di 1.0 moltiplicato per il fattore di scala rispetto ai bordi
+        margin = 1.0 * SCALE_FACTOR
+        x = np.random.uniform(X_MIN + margin, X_MAX - w - margin)
+        y = np.random.uniform(Y_MIN + margin, Y_MAX - h - margin)
 
-        # Evita la compenetrazione tra gli ostacoli
         overlap = False
         for (ox, oy, ow, oh) in obstacles:
             if not (x + w < ox or x > ox + ow or y + h < oy or y > oy + oh):
@@ -74,39 +85,63 @@ def generate_random_obstacles(num_obs):
 
     return obstacles
 
-
-NUM_OBSTACLES = 6
-OBSTACLES = generate_random_obstacles(NUM_OBSTACLES)
-
+MAX_SPAWN_ATTEMPTS = 1000  # Quanti tentativi prima di rinunciare e resettare
 
 def generate_safe_position(margin):
-    while True:
-        # Genera un punto distante dai bordi della mappa
+    attempts = 0
+    while attempts < MAX_SPAWN_ATTEMPTS:
         pt = np.random.uniform([X_MIN + margin, Y_MIN + margin], [X_MAX - margin, Y_MAX - margin])
         safe = True
         for (ox, oy, ow, oh) in OBSTACLES:
-            # Controlla se il punto cade nel rettangolo (allargato dal margine di sicurezza)
             if (ox - margin) <= pt[0] <= (ox + ow + margin) and (oy - margin) <= pt[1] <= (oy + oh + margin):
                 safe = False
                 break
         if safe:
             return pt.tolist()
+        attempts += 1
 
-
-START_POS = generate_safe_position(margin=2.5)
-print('Generato punto di inizio')
+    # Se usciamo dal ciclo significa che abbiamo fallito
+    return None
 
 while True:
-    candidate_goal = generate_safe_position(margin=1.5)
+    print("Tentativo di generazione mappa...")
 
-    # Calcola la distanza tra il candidato e la partenza appena creata
-    dist_to_start = np.linalg.norm(np.array(candidate_goal) - np.array(START_POS))
+    # 1. Generiamo gli ostacoli
+    OBSTACLES = generate_random_obstacles(NUM_OBSTACLES)
 
-    # Se la distanza è maggiore o uguale al minimo, accetta il punto e interrompi il ciclo
-    if dist_to_start >= MIN_START_GOAL_DIST:
-        GOAL_POS = candidate_goal
-        print('Generato punto di arrivo')
-        break
+    # 2. Proviamo a piazzare la partenza
+    START_POS = generate_safe_position(margin= CIRC_RADIUS)
+    if START_POS is None:
+        print("  -> Mappa troppo intasata per la partenza. Rigenero...")
+        continue  # Ricomincia dall'inizio ricreando gli ostacoli
+
+    # 3. Proviamo a piazzare l'arrivo
+    goal_found = False
+    goal_attempts = 0
+
+    while goal_attempts < MAX_SPAWN_ATTEMPTS:
+        candidate_goal = generate_safe_position(margin= CIRC_RADIUS)
+
+        if candidate_goal is None:
+            break  # Mappa intasata, usciamo dal ciclo interno
+
+        dist_to_start = np.linalg.norm(np.array(candidate_goal) - np.array(START_POS))
+
+        if dist_to_start >= MIN_START_GOAL_DIST:
+            GOAL_POS = candidate_goal
+            goal_found = True
+            break  # Trovato! Usciamo dal ciclo interno
+
+        goal_attempts += 1
+
+    # 4. Controllo finale
+    if goal_found:
+        print("  -> Start e Goal generati con successo!")
+        break  # Usciamo dal Master Loop, la mappa è pronta!
+    else:
+        print("  -> Impossibile trovare un traguardo a distanza sicura. Rigenero...")
+
+
 
 # ==========================================
 # Funzioni Geometriche
@@ -132,29 +167,26 @@ def line_intersects_rect(p1, p2, ox, oy, ow, oh):
 # ==========================================
 # Algoritmo PRM
 # ==========================================
-def generate_prm(start, goal, num_samples=250, k_neighbors=8):
+# Aumentiamo i sample del PRM proporzionalmente alla grandezza dell'area
+def generate_prm(start, goal, num_samples=int(250), k_neighbors=8):
     print("Generazione PRM in corso...")
     samples = [start, goal]
 
-    # Campionamento
     while len(samples) < num_samples + 2:
         pt = np.random.uniform([X_MIN, Y_MIN], [X_MAX, Y_MAX])
         safe = True
         for (ox, oy, ow, oh) in OBSTACLES:
-            if (ox - 0.5) <= pt[0] <= (ox + ow + 0.5) and (oy - 0.5) <= pt[1] <= (oy + oh + 0.5):
+            if (ox - 1) <= pt[0] <= (ox + ow + 1) and (oy - 1) <= pt[1] <= (oy + oh + 1):
                 safe = False
                 break
         if safe:
             samples.append(pt.tolist())
 
-    # Costruzione del Grafo
     G = nx.Graph()
 
-    # Aggiunge tutti i nodi
     for i in range(len(samples)):
         G.add_node(i, pos=samples[i])
 
-    # Aggiunge gli archi (connessioni)
     for i in range(len(samples)):
         distances = []
         for j in range(len(samples)):
@@ -164,33 +196,25 @@ def generate_prm(start, goal, num_samples=250, k_neighbors=8):
         distances.sort(key=lambda x: x[1])
 
         for j, d in distances[:k_neighbors]:
-            # Evita di ricalcolare le collisioni se l'arco è già stato aggiunto (es. da j verso i)
             if not G.has_edge(i, j):
                 collision = any(
                     line_intersects_rect(samples[i], samples[j], ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES)
                 if not collision:
-                    # Aggiunge l'arco specificando il "peso" (la distanza fisica)
                     G.add_edge(i, j, weight=d)
 
-    # 3. Ricerca del percorso più breve con NetworkX
     try:
-        # NetworkX usa Dijkstra internamente per trovare il percorso basato sul 'weight'
         path_indices = nx.shortest_path(G, source=0, target=1, weight='weight')
-
-        # Mappa gli indici restituiti nelle coordinate effettive
         path = [samples[i] for i in path_indices]
         print(f"PRM Trovato! Nodi: {len(path)}")
 
     except nx.NetworkXNoPath:
-        # Gestione elegante dell'errore se il traguardo è irraggiungibile
         print("ERRORE: Nessun percorso valido trovato! Restituisco linea retta di emergenza.")
         path = [start, goal]
-    return path, samples
+    return path, samples, G
 
 
-T, ALL_PRM_NODES = generate_prm(START_POS, GOAL_POS)
+T, ALL_PRM_NODES, PRM_GRAPH = generate_prm(START_POS, GOAL_POS)
 
-# L'indice parte da 1 perché T[0] è la posizione di partenza
 t_idx = 1 if len(T) > 1 else 0
 TARGET = np.array(T[t_idx], dtype=float)
 
@@ -198,22 +222,13 @@ TARGET = np.array(T[t_idx], dtype=float)
 # Inizializzazione Formazione
 # ==========================================
 safe_center = list(START_POS)
-
-# L'Agente 0 (leader/centro) nasce ESATTAMENTE sul punto di partenza sicuro
 Pos = [safe_center]
 
-# Definiamo il raggio massimo entro cui i satelliti possono nascere.
-# Avendo impostato margin=2.5 nella generazione di START_POS,
-# usare un raggio di 2.0 ci garantisce che non nascano dentro i muri!
-SPAWN_RADIUS = 2.0
+# Scala dinamicamente anche l'area di spawn iniziale dei droni
+SPAWN_RADIUS = 2.0 * SCALE_FACTOR
 
 for i in range(1, NUM_AGENTS):
-    # Genera un angolo casuale in radianti (da 0 a 2*Pi)
     angle = np.random.uniform(0, 2 * math.pi)
-
-    # Genera una distanza casuale dal centro.
-    # Usiamo la radice quadrata per distribuire i satelliti in modo uniforme
-    # in tutta l'area del cerchio, evitando che si ammassino tutti esattamente al centro.
     r = SPAWN_RADIUS * math.sqrt(np.random.uniform(0, 1))
 
     p = [round(safe_center[0] + r * math.cos(angle), 2),
@@ -260,10 +275,6 @@ def bound(new_positions):
         DESIRED_DISTANCES[sat_A, sat_B] = dist[1]
         DESIRED_DISTANCES[sat_B, sat_A] = dist[1]
 
-
-
-        # Calcoliamo il limite: prende il valore più piccolo tra la topologia
-        # completa (num_sat // 2 + 1) e il nostro limite imposto (2 + MAX_DIAG_STEPS)
         limit_step = min(num_sat // 2 + 1, 2 + MAX_DIAG_STEPS)
 
         for step in range(2, limit_step):
@@ -296,16 +307,8 @@ def calculate_formation_force(pos, all_positions, agent_index):
 
             if dist > 0.001:
                 error = dist - d_des
-
-                # --- NOVITÀ: Rigidità inversamente proporzionale alla lunghezza ---
-                # Moltiplichiamo K_FORM per (D / d_des).
-                # - Se è un lato del perimetro (d_des == D), il rapporto è 1.0 (forza piena).
-                # - Se è una diagonale lunga il doppio, il rapporto è 0.5 (forza dimezzata).
-                # Usiamo min(1.0, ...) come misura di sicurezza per le fluttuazioni dei float,
-                # garantendo che la molla non diventi mai più rigida di K_FORM.
                 current_k = K_FORM * min(1.0, (D / d_des))
 
-                # Applichiamo il potenziale di Huber usando il nuovo guadagno dinamico
                 if abs(error) <= HUBER_DELTA:
                     force_mag = -current_k * error
                 else:
@@ -370,8 +373,11 @@ def limit_speed(velocity, max_speed):
 # ==========================================
 fig, ax = plt.subplots(figsize=(8, 8))
 fig.subplots_adjust(bottom=0.15)
-ax.set_xlim(X_MIN - 1, X_MAX + 1)
-ax.set_ylim(Y_MIN - 1, Y_MAX + 1)
+
+# Scaliamo anche la telecamera per far entrare tutto
+ax.set_xlim(X_MIN - 1 * SCALE_FACTOR, X_MAX + 1 * SCALE_FACTOR)
+ax.set_ylim(Y_MIN - 1 * SCALE_FACTOR, Y_MAX + 1 * SCALE_FACTOR)
+
 ax.set_title("Formazione Multi-Agente PRM")
 ax.grid(True)
 
@@ -380,11 +386,25 @@ for (ox, oy, ow, oh) in OBSTACLES:
     ax.add_patch(rect)
 prm_line, = ax.plot([p[0] for p in T], [p[1] for p in T], 'go--', lw=1, markersize=6, alpha=0.6, zorder=0)
 target_plot, = ax.plot(TARGET[0], TARGET[1], 'rX', markersize=12, label="Target")
-prm_nodes_scatter = ax.scatter([p[0] for p in ALL_PRM_NODES], [p[1] for p in ALL_PRM_NODES], c='lightgray', s=15, zorder=0)
+prm_nodes_scatter = ax.scatter([p[0] for p in ALL_PRM_NODES], [p[1] for p in ALL_PRM_NODES], c='lightgray', s=15,
+                               zorder=0)
 prm_nodes_scatter.set_visible(False)
 scat = ax.scatter(positions[:, 0], positions[:, 1], c='b', s=100, zorder=4, label="Agenti")
 MAX_LINKS = NUM_AGENTS * (NUM_AGENTS - 1) // 2
 graph_lines = [ax.plot([], [], 'k-', lw=2, zorder=2)[0] for _ in range(MAX_LINKS)]
+
+
+edge_segments = []
+for u, v in PRM_GRAPH.edges():
+    p1 = ALL_PRM_NODES[u]
+    p2 = ALL_PRM_NODES[v]
+    edge_segments.append([p1, p2])
+
+# Creazione della collezione di linee (archi del grafo)
+prm_edges_collection = LineCollection(edge_segments, colors='lightgray',
+                                      linewidths=0.5, alpha=0.3, zorder=0)
+ax.add_collection(prm_edges_collection)
+prm_edges_collection.set_visible(False) # Nascosto di default
 
 show_links = False
 show_nodes = False
@@ -393,20 +413,24 @@ ax_button = plt.axes((0.1, 0.9, 0.25, 0.06))
 btn_links = Button(ax_button, 'Toggle Vincoli')
 
 ax_btn_nodes = plt.axes((0.68, 0.9, 0.3, 0.06))
-btn_nodes = Button(ax_btn_nodes, 'Toggle Nodi')
+btn_nodes = Button(ax_btn_nodes, 'Toggle Grafo')
+
 
 def toggle_visibility(event):
     global show_links
     show_links = not show_links
 
+
 def toggle_nodes(event):
     global show_nodes
     show_nodes = not show_nodes
-    # A differenza delle linee, per uno scatter plot basta accendere/spegnere la visibilità
     prm_nodes_scatter.set_visible(show_nodes)
+    prm_edges_collection.set_visible(show_nodes)
+
 
 btn_links.on_clicked(toggle_visibility)
 btn_nodes.on_clicked(toggle_nodes)
+
 
 # ==========================================
 # Ciclo di Aggiornamento
@@ -416,16 +440,20 @@ def update(frame):
 
     centroid = positions[CIRC_CENTER_IDX]
 
-    # --- NOVITÀ: L'agente raggiunge il nodo e fa saltare il target al prossimo ---
     if t_idx < len(T):
         dist_agent_to_target = np.linalg.norm(centroid - TARGET)
 
-        # Se il leader è entro 0.5m dal target attuale, passa al nodo successivo
         if dist_agent_to_target < 0.5:
             t_idx += 1
             if t_idx < len(T):
                 TARGET = np.array(T[t_idx], dtype=float)
-                bound(positions)  # Ricalcola la topologia
+                bound(positions)
+
+    else:
+        # Se siamo arrivati all'ultimo waypoint, aggiorniamo periodicamente la topologia
+        # L'operatore % (modulo) fa scattare l'if solo quando il frame è un multiplo di 20
+        if frame % TOPOLOGY_UPDATE_INTERVAL == 0:
+            bound(positions)
 
     target_plot.set_data([TARGET[0]], [TARGET[1]])
 
@@ -458,7 +486,6 @@ def update(frame):
 
         new_positions[i] += velocity * DT
 
-
         if i in SATELLITE_IDX:
             agent_colors.append('cyan')
         else:
@@ -475,12 +502,11 @@ def update(frame):
             p_i = positions[i]
             p_j = positions[j]
             line.set_data([p_i[0], p_j[0]], [p_i[1], p_j[1]])
-
             line.set_color('black')
         else:
             line.set_data([], [])
 
-    return [scat, target_plot, prm_line, prm_nodes_scatter] + graph_lines
+    return [scat, target_plot, prm_line, prm_nodes_scatter, prm_edges_collection] + graph_lines
 
 
 if __name__ == '__main__':
