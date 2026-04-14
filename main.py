@@ -10,10 +10,8 @@ from matplotlib.collections import LineCollection
 
 matplotlib.use('TkAgg')
 
-# ==========================================
 # Parametri del Sistema
-# ==========================================
-NUM_AGENTS = 10
+NUM_AGENTS = 7
 
 # 7 è considerato il numero standard. Non scala mai sotto l'1.0.
 SCALE_FACTOR = max(1.0, NUM_AGENTS / 7.0)
@@ -40,8 +38,8 @@ K_OBS = 5.0 * SCALE_FACTOR
 K_CIRC_OUT = 4.0 * SCALE_FACTOR
 K_CIRC_IN = 1.0
 
-REP_RADIUS = 1.0
-OBS_INFLUENCE = 1.0
+REP_RADIUS = 0.8
+OBS_INFLUENCE = 0.8
 HUBER_DELTA = 1.0
 DANGER_OBS = 0.5
 
@@ -52,16 +50,13 @@ SATELLITE_IDX = list(range(1, NUM_AGENTS))
 X_MIN, X_MAX = 0.0, 15.0 * SCALE_FACTOR
 Y_MIN, Y_MAX = 0.0, 15.0 * SCALE_FACTOR
 
-# Anche la distanza minima e il numero di ostacoli possono beneficiare di uno scaling
 MIN_START_GOAL_DIST = 10.0 * SCALE_FACTOR
 NUM_OBSTACLES = 7
 
 MAX_DIAG_STEPS = int(2 * SCALE_FACTOR)
 TOPOLOGY_UPDATE_INTERVAL = 60
 
-# ==========================================
 # Generazione Ostacoli Casuali
-# ==========================================
 def generate_random_obstacles(num_obs):
     obstacles = []
     while len(obstacles) < num_obs:
@@ -69,7 +64,7 @@ def generate_random_obstacles(num_obs):
         w = np.random.uniform(1.5 * SCALE_FACTOR, 3.0 * SCALE_FACTOR)
         h = np.random.uniform(1.5 * SCALE_FACTOR, 3.0 * SCALE_FACTOR)
 
-        # Manteniamo un margine di 1.0 moltiplicato per il fattore di scala rispetto ai bordi
+        # Margine di 1.0 moltiplicato per il fattore di scala rispetto ai bordi
         margin = 1.0 * SCALE_FACTOR
         x = np.random.uniform(X_MIN + margin, X_MAX - w - margin)
         y = np.random.uniform(Y_MIN + margin, Y_MAX - h - margin)
@@ -100,52 +95,50 @@ def generate_safe_position(margin):
             return pt.tolist()
         attempts += 1
 
-    # Se usciamo dal ciclo significa che abbiamo fallito
+    # Se esce dal ciclo significa che ha fallito
     return None
 
 while True:
     print("Tentativo di generazione mappa...")
 
-    # 1. Generiamo gli ostacoli
+    # Generazione ostacoli
     OBSTACLES = generate_random_obstacles(NUM_OBSTACLES)
 
-    # 2. Proviamo a piazzare la partenza
+    # Prova a piazzare la partenza
     START_POS = generate_safe_position(margin= CIRC_RADIUS)
     if START_POS is None:
         print("  -> Mappa troppo intasata per la partenza. Rigenero...")
         continue  # Ricomincia dall'inizio ricreando gli ostacoli
 
-    # 3. Proviamo a piazzare l'arrivo
+    # Prova a piazzare l'arrivo
     goal_found = False
     goal_attempts = 0
 
     while goal_attempts < MAX_SPAWN_ATTEMPTS:
-        candidate_goal = generate_safe_position(margin= CIRC_RADIUS)
+        candidate_goal = generate_safe_position(margin= CIRC_RADIUS/2)
 
         if candidate_goal is None:
-            break  # Mappa intasata, usciamo dal ciclo interno
+            break  # Mappa intasata, esce dal ciclo interno
 
         dist_to_start = np.linalg.norm(np.array(candidate_goal) - np.array(START_POS))
 
         if dist_to_start >= MIN_START_GOAL_DIST:
             GOAL_POS = candidate_goal
             goal_found = True
-            break  # Trovato! Usciamo dal ciclo interno
+            break  # Esce dal ciclo interno
 
         goal_attempts += 1
 
-    # 4. Controllo finale
+    # Controllo finale
     if goal_found:
         print("  -> Start e Goal generati con successo!")
-        break  # Usciamo dal Master Loop, la mappa è pronta!
+        break
     else:
         print("  -> Impossibile trovare un traguardo a distanza sicura. Rigenero...")
 
 
 
-# ==========================================
 # Funzioni Geometriche
-# ==========================================
 def get_closest_point_on_rect(px, py, ox, oy, ow, oh):
     cx = np.clip(px, ox, ox + ow)
     cy = np.clip(py, oy, oy + oh)
@@ -164,11 +157,8 @@ def line_intersects_rect(p1, p2, ox, oy, ow, oh):
     return False
 
 
-# ==========================================
 # Algoritmo PRM
-# ==========================================
-# Aumentiamo i sample del PRM proporzionalmente alla grandezza dell'area
-def generate_prm(start, goal, num_samples=int(250), k_neighbors=8):
+def generate_prm(start, goal, num_samples=250, k_neighbors=8):
     print("Generazione PRM in corso...")
     samples = [start, goal]
 
@@ -218,9 +208,7 @@ T, ALL_PRM_NODES, PRM_GRAPH = generate_prm(START_POS, GOAL_POS)
 t_idx = 1 if len(T) > 1 else 0
 TARGET = np.array(T[t_idx], dtype=float)
 
-# ==========================================
 # Inizializzazione Formazione
-# ==========================================
 safe_center = list(START_POS)
 Pos = [safe_center]
 
@@ -238,10 +226,12 @@ for i in range(1, NUM_AGENTS):
 positions = np.array(Pos)
 CONNECTIONS = []
 
+# Calcolo angoli
 for a in range(NUM_AGENTS - 4):
     angolo = A[a] - ((180 - ALPHA) / 2)
     A.append(angolo)
 
+# Calcolo lunghezze diagonali
 for d in range(int((NUM_AGENTS - 1) / 2) - 1):
     last = dist[-1]
     new_dist = math.sqrt(dist[1] * dist[1] + last * last - 2 * dist[1] * last * math.cos(math.radians(A[d])))
@@ -292,9 +282,7 @@ def bound(new_positions):
 bound(positions)
 
 
-# ==========================================
 # Funzioni di Controllo (APF)
-# ==========================================
 def calculate_formation_force(pos, all_positions, agent_index):
     force = np.zeros(2)
     for j, other_pos in enumerate(all_positions):
@@ -312,7 +300,7 @@ def calculate_formation_force(pos, all_positions, agent_index):
                 if abs(error) <= HUBER_DELTA:
                     force_mag = -current_k * error
                 else:
-                    force_mag = -current_k * HUBER_DELTA * np.sign(error)
+                    force_mag = -current_k *  np.sign(error)
 
                 force += force_mag * (diff / dist)
     return force
@@ -329,7 +317,7 @@ def calculate_circular_orbit_force(pos, center_pos, radius):
     if abs(error) <= HUBER_DELTA:
         force_mag = -current_k * error
     else:
-        force_mag = -current_k * HUBER_DELTA * np.sign(error)
+        force_mag = -current_k *  np.sign(error)
 
     return force_mag * (diff / dist)
 
@@ -346,7 +334,7 @@ def calculate_repulsive_force(pos, all_positions, agent_index):
     return force
 
 
-def calculate_obstacle_force(pos):
+def calculate_obstacle_force(pos, leader_pos):
     force = np.zeros(2)
     for (ox, oy, ow, oh) in OBSTACLES:
         closest_pt = get_closest_point_on_rect(pos[0], pos[1], ox, oy, ow, oh)
@@ -358,8 +346,24 @@ def calculate_obstacle_force(pos):
             dist_to_edge = 0.001
 
         if 0 < dist_to_edge < OBS_INFLUENCE:
+            # Forza repulsiva normale
+            normal = diff / dist_to_edge
             rep_mag = K_OBS * (1.0 / dist_to_edge - 1.0 / OBS_INFLUENCE) * (1.0 / (dist_to_edge ** 2))
-            force += rep_mag * (diff / dist_to_edge)
+            normal_force = rep_mag * normal
+
+            # Forza tangenziale
+            tangent_1 = np.array([-normal[1], normal[0]])
+            tangent_2 = np.array([normal[1], -normal[0]])
+
+            # Uso tangente che punta maggiormente verso il leader
+            dir_to_leader = leader_pos - pos
+            if np.dot(tangent_1, dir_to_leader) > 0:
+                tangent_force = rep_mag * tangent_1 * 0.8
+            else:
+                tangent_force = rep_mag * tangent_2 * 0.8
+
+            # Sommiamo entrambe le forze
+            force += normal_force + (tangent_force/2)
     return force
 
 
@@ -368,9 +372,7 @@ def limit_speed(velocity, max_speed):
     return (velocity / speed) * max_speed if speed > max_speed else velocity
 
 
-# ==========================================
 # Setup Grafico
-# ==========================================
 fig, ax = plt.subplots(figsize=(8, 8))
 fig.subplots_adjust(bottom=0.15)
 
@@ -431,10 +433,7 @@ def toggle_nodes(event):
 btn_links.on_clicked(toggle_visibility)
 btn_nodes.on_clicked(toggle_nodes)
 
-
-# ==========================================
 # Ciclo di Aggiornamento
-# ==========================================
 def update(frame):
     global positions, TARGET, t_idx
 
@@ -450,8 +449,7 @@ def update(frame):
                 bound(positions)
 
     else:
-        # Se siamo arrivati all'ultimo waypoint, aggiorniamo periodicamente la topologia
-        # L'operatore % (modulo) fa scattare l'if solo quando il frame è un multiplo di 20
+        # All'ultimo waypoint, aggiorna periodicamente la topologia
         if frame % TOPOLOGY_UPDATE_INTERVAL == 0:
             bound(positions)
 
@@ -466,13 +464,13 @@ def update(frame):
         if dist_to_target <= HUBER_DELTA:
             f_target_global = K_TARGET * vector_to_target
         else:
-            f_target_global = K_TARGET * HUBER_DELTA * (vector_to_target / dist_to_target)
+            f_target_global = K_TARGET * (vector_to_target / dist_to_target)
 
     agent_colors = []
 
     for i in range(NUM_AGENTS):
         f_rep = calculate_repulsive_force(positions[i], positions, i)
-        f_obs = calculate_obstacle_force(positions[i])
+        f_obs = calculate_obstacle_force(positions[i], positions[0])
         f_form = calculate_formation_force(positions[i], positions, i)
 
         if i in SATELLITE_IDX:
