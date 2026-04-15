@@ -15,6 +15,7 @@ NUM_AGENTS = 7
 
 # 7 è considerato il numero standard. Non scala mai sotto l'1.0.
 SCALE_FACTOR = max(1.0, NUM_AGENTS / 7.0)
+print('Fattore di scala: ', SCALE_FACTOR)
 
 ALPHA = ((NUM_AGENTS - 3) * 180) / (NUM_AGENTS - 1)
 A = [ALPHA]
@@ -36,7 +37,7 @@ K_FORM = 1.5 * SCALE_FACTOR
 K_REP = 2.0 * SCALE_FACTOR
 K_OBS = 5.0 * SCALE_FACTOR
 K_CIRC_OUT = 4.0 * SCALE_FACTOR
-K_CIRC_IN = 1.0
+K_CIRC_IN = 1.5 * SCALE_FACTOR
 
 REP_RADIUS = 0.8
 OBS_INFLUENCE = 0.8
@@ -51,10 +52,17 @@ X_MIN, X_MAX = 0.0, 15.0 * SCALE_FACTOR
 Y_MIN, Y_MAX = 0.0, 15.0 * SCALE_FACTOR
 
 MIN_START_GOAL_DIST = 10.0 * SCALE_FACTOR
-NUM_OBSTACLES = 7
+NUM_OBSTACLES = 8
 
 MAX_DIAG_STEPS = int(2 * SCALE_FACTOR)
-TOPOLOGY_UPDATE_INTERVAL = 60
+print('Numero diagonali: ', min(MAX_DIAG_STEPS*2, NUM_AGENTS -4))
+TOPOLOGY_UPDATE_INTERVAL = 40
+MIN_FRAMES_BETWEEN_BOUNDS = 40  # 20 frame corrispondono a 1 secondo simulato (se DT=0.05 e intervallo=20ms)
+last_bound_frame = 0            # Memoria dell'ultimo frame in cui la topologia è stata aggiornata
+WAIT_TIME_SECONDS = 0.4  # Quanti secondi vuoi che si fermi su ogni nodo
+WAIT_FRAMES = int(WAIT_TIME_SECONDS / DT)  # Converte i secondi in numero di frame (es. 2.0 / 0.05 = 40)
+is_waiting = False       # Stato: True se l'agente sta aspettando sul nodo
+wait_start_frame = 0     # Memoria del frame in cui è iniziata l'attesa
 
 # Generazione Ostacoli Casuali
 def generate_random_obstacles(num_obs):
@@ -107,7 +115,7 @@ while True:
     # Prova a piazzare la partenza
     START_POS = generate_safe_position(margin= CIRC_RADIUS)
     if START_POS is None:
-        print("  -> Mappa troppo intasata per la partenza. Rigenero...")
+        print("Mappa troppo intasata per la partenza. Rigenero...")
         continue  # Ricomincia dall'inizio ricreando gli ostacoli
 
     # Prova a piazzare l'arrivo
@@ -131,7 +139,7 @@ while True:
 
     # Controllo finale
     if goal_found:
-        print("  -> Start e Goal generati con successo!")
+        print("Start e Goal generati con successo!")
         break
     else:
         print("  -> Impossibile trovare un traguardo a distanza sicura. Rigenero...")
@@ -158,48 +166,65 @@ def line_intersects_rect(p1, p2, ox, oy, ow, oh):
 
 
 # Algoritmo PRM
-def generate_prm(start, goal, num_samples=250, k_neighbors=8):
+def generate_prm(start, goal, min_samples=50 , max_samples=500, k_neighbors=4):
     print("Generazione PRM in corso...")
     samples = [start, goal]
 
-    while len(samples) < num_samples + 2:
+    # Inizializziamo subito il Grafo e aggiungiamo Partenza (0) e Arrivo (1)
+    G = nx.Graph()
+    G.add_node(0, pos=start)
+    G.add_node(1, pos=goal)
+
+    node_idx = 2  # Partiamo dall'indice 2 per i nuovi campioni
+
+    # Generazione incrementale
+    while node_idx < max_samples + 2:
+        # 1. Genera un punto sicuro
         pt = np.random.uniform([X_MIN, Y_MIN], [X_MAX, Y_MAX])
         safe = True
         for (ox, oy, ow, oh) in OBSTACLES:
-            if (ox - 1) <= pt[0] <= (ox + ow + 1) and (oy - 1) <= pt[1] <= (oy + oh + 1):
+            if (ox - 0.5) <= pt[0] <= (ox + ow + 0.5) and (oy - 0.5) <= pt[1] <= (oy + oh + 0.5):
                 safe = False
                 break
+
         if safe:
             samples.append(pt.tolist())
+            G.add_node(node_idx, pos=pt.tolist())
 
-    G = nx.Graph()
-
-    for i in range(len(samples)):
-        G.add_node(i, pos=samples[i])
-
-    for i in range(len(samples)):
-        distances = []
-        for j in range(len(samples)):
-            if i != j:
-                d = np.linalg.norm(np.array(samples[i]) - np.array(samples[j]))
+            # 2. Calcola le distanze SOLO rispetto ai nodi già esistenti
+            distances = []
+            for j in range(node_idx):
+                d = np.linalg.norm(np.array(samples[node_idx]) - np.array(samples[j]))
                 distances.append((j, d))
-        distances.sort(key=lambda x: x[1])
+            distances.sort(key=lambda x: x[1])
 
-        for j, d in distances[:k_neighbors]:
-            if not G.has_edge(i, j):
+            # 3. Collega il nuovo nodo ai suoi K vicini più prossimi
+            for j, d in distances[:k_neighbors]:
                 collision = any(
-                    line_intersects_rect(samples[i], samples[j], ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES)
+                    line_intersects_rect(samples[node_idx], samples[j], ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES)
                 if not collision:
-                    G.add_edge(i, j, weight=d)
+                    G.add_edge(node_idx, j, weight=d)
 
+            node_idx += 1
+
+            # --- NOVITÀ: Controllo di Chiusura Anticipata ---
+            # Se abbiamo superato il minimo richiesto di campioni...
+            if len(samples) >= min_samples + 2:
+                # ...controlliamo se i nodi 0 (Start) e 1 (Goal) sono finalmente connessi!
+                if nx.has_path(G, 0, 1):
+                    print(f"  -> Percorso trovato in anticipo al campione {len(samples) - 2}!")
+                    break  # Interrompe il ciclo while e passa all'estrazione del percorso
+
+    # 4. Estrazione del percorso
     try:
         path_indices = nx.shortest_path(G, source=0, target=1, weight='weight')
         path = [samples[i] for i in path_indices]
-        print(f"PRM Trovato! Nodi: {len(path)}")
+        print(f"PRM Concluso. Nodi della rotta: {len(path)}")
 
     except nx.NetworkXNoPath:
-        print("ERRORE: Nessun percorso valido trovato! Restituisco linea retta di emergenza.")
+        print("ERRORE: Raggiunto il limite massimo di campioni senza trovare vie d'uscita!")
         path = [start, goal]
+
     return path, samples, G
 
 
@@ -312,7 +337,7 @@ def calculate_circular_orbit_force(pos, center_pos, radius):
     if dist < 0.001: return np.random.rand(2) * 0.1
 
     error = dist - radius
-    current_k = K_CIRC_OUT if error > 0 else K_CIRC_IN
+    current_k = K_CIRC_OUT if error > 0 else K_CIRC_IN  # Scelta potenziale repulsivo
 
     if abs(error) <= HUBER_DELTA:
         force_mag = -current_k * error
@@ -362,7 +387,6 @@ def calculate_obstacle_force(pos, leader_pos):
             else:
                 tangent_force = rep_mag * tangent_2 * 0.8
 
-            # Sommiamo entrambe le forze
             force += normal_force + (tangent_force/2)
     return force
 
@@ -376,7 +400,6 @@ def limit_speed(velocity, max_speed):
 fig, ax = plt.subplots(figsize=(8, 8))
 fig.subplots_adjust(bottom=0.15)
 
-# Scaliamo anche la telecamera per far entrare tutto
 ax.set_xlim(X_MIN - 1 * SCALE_FACTOR, X_MAX + 1 * SCALE_FACTOR)
 ax.set_ylim(Y_MIN - 1 * SCALE_FACTOR, Y_MAX + 1 * SCALE_FACTOR)
 
@@ -435,21 +458,38 @@ btn_nodes.on_clicked(toggle_nodes)
 
 # Ciclo di Aggiornamento
 def update(frame):
-    global positions, TARGET, t_idx
+    global positions, TARGET, t_idx, last_bound_frame, is_waiting, wait_start_frame
 
     centroid = positions[CIRC_CENTER_IDX]
 
     if t_idx < len(T):
-        dist_agent_to_target = np.linalg.norm(centroid - TARGET)
 
-        if dist_agent_to_target < 0.5:
-            t_idx += 1
-            if t_idx < len(T):
-                TARGET = np.array(T[t_idx], dtype=float)
-                bound(positions)
+        # --- NOVITÀ: Logica di Attesa ---
+        if is_waiting:
+            # Controlla se è passato abbastanza tempo (frame) dall'inizio dell'attesa
+            if frame - wait_start_frame >= WAIT_FRAMES:
+                is_waiting = False  # Fine attesa!
+                t_idx += 1  # Passa al nodo successivo
 
+                if t_idx < len(T):
+                    TARGET = np.array(T[t_idx], dtype=float)
+
+                    # Aggiorna la topologia alla ripartenza (cooldown)
+                    if (frame - last_bound_frame) >= MIN_FRAMES_BETWEEN_BOUNDS:
+                        bound(positions)
+                        last_bound_frame = frame
+        else:
+            # Se NON sta aspettando, controlla se ha raggiunto il bersaglio
+            dist_agent_to_target = np.linalg.norm(centroid - TARGET)
+
+            if dist_agent_to_target < 0.5:
+                # Arrivato al waypoint! Inizia l'attesa invece di passare subito oltre
+                is_waiting = True
+                wait_start_frame = frame
+
+        # Comportamento a fine percorso
     else:
-        # All'ultimo waypoint, aggiorna periodicamente la topologia
+        # TOPOLOGY_UPDATE_INTERVAL dovrebbe essere impostato a 20 nei tuoi parametri
         if frame % TOPOLOGY_UPDATE_INTERVAL == 0:
             bound(positions)
 
@@ -477,6 +517,7 @@ def update(frame):
             f_circ = calculate_circular_orbit_force(positions[i], positions[CIRC_CENTER_IDX], CIRC_RADIUS)
             total_force = f_form + f_circ + f_rep + f_obs
             velocity = limit_speed(total_force, MAX_SPEED * 1.5)
+
         else:
             f_global = f_target_global
             total_force = f_global + f_form + f_rep + f_obs
