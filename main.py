@@ -11,7 +11,7 @@ from matplotlib.collections import LineCollection
 matplotlib.use('TkAgg')
 
 # Parametri del Sistema
-NUM_AGENTS = 15
+NUM_AGENTS = 14
 
 # 7 è considerato il numero standard. Non scala mai sotto l'1.0.
 SCALE_FACTOR = max(1.0, NUM_AGENTS / 7.0)
@@ -63,6 +63,9 @@ WAIT_TIME_SECONDS = 0.4  # Quanti secondi vuoi che si fermi su ogni nodo
 WAIT_FRAMES = int(WAIT_TIME_SECONDS / DT)  # Converte i secondi in numero di frame (es. 2.0 / 0.05 = 40)
 is_waiting = False       # Stato: True se l'agente sta aspettando sul nodo
 wait_start_frame = 0     # Memoria del frame in cui è iniziata l'attesa
+satellite_paths = {i: [] for i in range(NUM_AGENTS)}
+position_history = np.zeros((NUM_AGENTS, 2))
+stall_timers = np.zeros(NUM_AGENTS)
 
 # Generazione Ostacoli Casuali
 def generate_random_obstacles(num_obs):
@@ -396,6 +399,67 @@ def limit_speed(velocity, max_speed):
     return (velocity / speed) * max_speed if speed > max_speed else velocity
 
 
+def calculate_escape_path(start_pos, target_pos):
+    best_start = None
+    min_ds = float('inf')
+
+    # NOVITÀ: Piano B se il drone è schiacciato nel margine
+    best_start_fallback = None
+    min_ds_fallback = float('inf')
+
+    for idx in PRM_GRAPH.nodes():
+        node_pos = np.array(ALL_PRM_NODES[idx])
+        d = np.linalg.norm(start_pos - node_pos)
+
+        # Aggiorna sempre il nodo più vicino in assoluto (Piano B)
+        if d < min_ds_fallback:
+            min_ds_fallback = d
+            best_start_fallback = idx
+
+        # Cerca il nodo più vicino visibile senza attraversare ostacoli
+        if d < min_ds and not any(
+                line_intersects_rect(start_pos, node_pos, ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES):
+            min_ds = d
+            best_start = idx
+
+    # Se non ha trovato nodi perfettamente visibili, usa il più vicino in assoluto
+    if best_start is None:
+        best_start = best_start_fallback
+
+    # Fai lo stesso per il bersaglio (il leader)
+    best_target = None
+    min_dt = float('inf')
+    best_target_fallback = None
+    min_dt_fallback = float('inf')
+
+    for idx in PRM_GRAPH.nodes():
+        node_pos = np.array(ALL_PRM_NODES[idx])
+        d = np.linalg.norm(target_pos - node_pos)
+
+        if d < min_dt_fallback:
+            min_dt_fallback = d
+            best_target_fallback = idx
+
+        if d < min_dt and not any(
+                line_intersects_rect(target_pos, node_pos, ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES):
+            min_dt = d
+            best_target = idx
+
+    if best_target is None:
+        best_target = best_target_fallback
+
+    # Calcolo percorso
+    if best_start is not None and best_target is not None:
+        try:
+            path_idx = nx.shortest_path(PRM_GRAPH, best_start, best_target, weight='weight')
+            path = [np.array(ALL_PRM_NODES[idx]) for idx in path_idx]
+            if len(path) > 0 and np.linalg.norm(start_pos - path[0]) < 1.0:
+                path.pop(0)
+            return path
+        except nx.NetworkXNoPath:
+            pass
+    return []
+
 # Setup Grafico
 fig, ax = plt.subplots(figsize=(8, 8))
 fig.subplots_adjust(bottom=0.15)
@@ -417,7 +481,7 @@ prm_nodes_scatter.set_visible(False)
 scat = ax.scatter(positions[:, 0], positions[:, 1], c='b', s=100, zorder=4, label="Agenti")
 MAX_LINKS = NUM_AGENTS * (NUM_AGENTS - 1) // 2
 graph_lines = [ax.plot([], [], 'k-', lw=2, zorder=2)[0] for _ in range(MAX_LINKS)]
-
+sat_path_lines = [ax.plot([], [], 'c--', lw=1.5, alpha=0.8, zorder=3)[0] for _ in range(NUM_AGENTS)]
 
 edge_segments = []
 for u, v in PRM_GRAPH.edges():
@@ -458,9 +522,11 @@ btn_nodes.on_clicked(toggle_nodes)
 
 # Ciclo di Aggiornamento
 def update(frame):
-    global positions, TARGET, t_idx, last_bound_frame, is_waiting, wait_start_frame
-
+    global positions, TARGET, t_idx, last_bound_frame, is_waiting, wait_start_frame, satellite_paths, position_history, stall_timers
     centroid = positions[CIRC_CENTER_IDX]
+    # Inizializza la cronologia posizioni al primissimo frame
+    if frame == 0:
+        position_history = np.copy(positions)
 
     if t_idx < len(T):
 
@@ -515,10 +581,52 @@ def update(frame):
 
         if i in SATELLITE_IDX:
             f_circ = calculate_circular_orbit_force(positions[i], positions[CIRC_CENTER_IDX], CIRC_RADIUS)
-            total_force = f_form + f_circ + f_rep + f_obs
-            velocity = limit_speed(total_force, MAX_SPEED * 1.5)
+
+            # --- INTELLIGENZA IBRIDA (PRM INDIVIDUALE) ---
+            if len(satellite_paths[i]) > 0:
+                wp = satellite_paths[i][0]
+                dist_to_wp = np.linalg.norm(positions[i] - wp)
+
+                if dist_to_wp < 0.5:
+                    satellite_paths[i].pop(0)
+                    velocity = np.zeros(2)
+                else:
+                    vec_to_wp = wp - positions[i]
+                    if dist_to_wp <= HUBER_DELTA:
+                        f_wp = K_TARGET * vec_to_wp
+                    else:
+                        f_wp = K_TARGET * HUBER_DELTA * (vec_to_wp / dist_to_wp)
+
+                    total_force = f_wp + f_rep + f_obs
+                    velocity = limit_speed(total_force, MAX_SPEED * 1.5)
+
+            else:
+                total_force = f_form + f_circ + f_rep + f_obs
+
+                # --- NOVITÀ: Rilevamento Stallo Posizionale Infallibile ---
+                stall_timers[i] += 1
+
+                # Controlliamo la situazione ogni 40 frame (circa 2 secondi di simulazione)
+                if stall_timers[i] >= 40:
+                    # Quanto si è mosso REALMENTE il drone negli ultimi 2 secondi?
+                    dist_moved = np.linalg.norm(positions[i] - position_history[i])
+                    dist_from_leader = np.linalg.norm(positions[i] - positions[CIRC_CENTER_IDX])
+
+                    # Se ha percorso meno di 1 metro in 2 secondi, ED è fuori dall'anello
+                    if dist_moved < 1.0 and dist_from_leader > (CIRC_RADIUS * 1.5):
+                        print(f"[{frame}] Satellite {i} bloccato fisicamente! Genero PRM...")
+                        new_path = calculate_escape_path(positions[i], positions[CIRC_CENTER_IDX])
+                        if new_path:
+                            satellite_paths[i] = new_path
+
+                    # Salviamo la posizione attuale per il prossimo controllo e resettiamo il timer
+                    position_history[i] = np.copy(positions[i])
+                    stall_timers[i] = 0
+
+                velocity = limit_speed(total_force, MAX_SPEED * 1.5)
 
         else:
+            # Comportamento del leader principale
             f_global = f_target_global
             total_force = f_global + f_form + f_rep + f_obs
             velocity = limit_speed(total_force, MAX_SPEED)
@@ -535,6 +643,14 @@ def update(frame):
     scat.set_offsets(positions)
     scat.set_color(agent_colors)
 
+    # --- Aggiornamento grafico (Aggiunta del percorso di fuga) ---
+    for i in range(NUM_AGENTS):
+        if i in SATELLITE_IDX and len(satellite_paths[i]) > 0:
+            path_coords = [positions[i]] + satellite_paths[i]
+            sat_path_lines[i].set_data([p[0] for p in path_coords], [p[1] for p in path_coords])
+        else:
+            sat_path_lines[i].set_data([], [])
+
     for idx, line in enumerate(graph_lines):
         if show_links and idx < len(CONNECTIONS):
             i, j = CONNECTIONS[idx]
@@ -545,7 +661,8 @@ def update(frame):
         else:
             line.set_data([], [])
 
-    return [scat, target_plot, prm_line, prm_nodes_scatter, prm_edges_collection] + graph_lines
+    # RICORDATI di restituire sat_path_lines nell'animazione!
+    return [scat, target_plot, prm_line, prm_nodes_scatter, prm_edges_collection] + graph_lines + sat_path_lines
 
 
 if __name__ == '__main__':
