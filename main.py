@@ -11,7 +11,7 @@ from matplotlib.collections import LineCollection
 matplotlib.use('TkAgg')
 
 # Parametri del Sistema
-NUM_AGENTS = 7
+NUM_AGENTS = 15
 
 # 7 è considerato il numero standard. Non scala mai sotto l'1.0.
 SCALE_FACTOR = max(1.0, NUM_AGENTS / 7.0)
@@ -39,8 +39,8 @@ K_OBS = 5.0 * SCALE_FACTOR
 K_CIRC_OUT = 4.0 * SCALE_FACTOR
 K_CIRC_IN = 1.5 * SCALE_FACTOR
 
-REP_RADIUS = 0.8
-OBS_INFLUENCE = 0.8
+REP_RADIUS = 0.6
+OBS_INFLUENCE = 0.6
 HUBER_DELTA = 1.0
 DANGER_OBS = 0.5
 
@@ -325,7 +325,7 @@ def calculate_formation_force(pos, all_positions, agent_index):
                 if abs(error) <= HUBER_DELTA:
                     force_mag = -current_k * error
                 else:
-                    force_mag = -current_k *  np.sign(error)
+                    force_mag = -current_k * HUBER_DELTA * np.sign(error)
 
                 force += force_mag * (diff / dist)
     return force
@@ -342,7 +342,7 @@ def calculate_circular_orbit_force(pos, center_pos, radius):
     if abs(error) <= HUBER_DELTA:
         force_mag = -current_k * error
     else:
-        force_mag = -current_k *  np.sign(error)
+        force_mag = -current_k * HUBER_DELTA * np.sign(error)
 
     return force_mag * (diff / dist)
 
@@ -504,7 +504,7 @@ def update(frame):
         if dist_to_target <= HUBER_DELTA:
             f_target_global = K_TARGET * vector_to_target
         else:
-            f_target_global = K_TARGET * (vector_to_target / dist_to_target)
+            f_target_global = K_TARGET * HUBER_DELTA * (vector_to_target / dist_to_target)
 
     agent_colors = []
 
