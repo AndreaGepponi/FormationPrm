@@ -15,7 +15,7 @@ NUM_AGENTS = 14
 
 # 7 è considerato il numero standard. Non scala mai sotto l'1.0.
 SCALE_FACTOR = max(1.0, NUM_AGENTS / 7.0)
-print('Fattore di scala: ', SCALE_FACTOR)
+print('Fattore di scala:', SCALE_FACTOR)
 
 ALPHA = ((NUM_AGENTS - 3) * 180) / (NUM_AGENTS - 1)
 A = [ALPHA]
@@ -52,14 +52,14 @@ X_MIN, X_MAX = 0.0, 15.0 * SCALE_FACTOR
 Y_MIN, Y_MAX = 0.0, 15.0 * SCALE_FACTOR
 
 MIN_START_GOAL_DIST = 10.0 * SCALE_FACTOR
-NUM_OBSTACLES = 8
+NUM_OBSTACLES = 9
 
 MAX_DIAG_STEPS = int(2 * SCALE_FACTOR)
-print('Numero diagonali: ', min(MAX_DIAG_STEPS*2, NUM_AGENTS -4))
+print('Numero diagonali:', min(MAX_DIAG_STEPS*2, NUM_AGENTS -4))
 TOPOLOGY_UPDATE_INTERVAL = 40
 MIN_FRAMES_BETWEEN_BOUNDS = 40  # 20 frame corrispondono a 1 secondo simulato (se DT=0.05 e intervallo=20ms)
 last_bound_frame = 0            # Memoria dell'ultimo frame in cui la topologia è stata aggiornata
-WAIT_TIME_SECONDS = 0.4  # Quanti secondi vuoi che si fermi su ogni nodo
+WAIT_TIME_SECONDS = 0.4         # Quanti secondi si ferma su ogni nodo
 WAIT_FRAMES = int(WAIT_TIME_SECONDS / DT)  # Converte i secondi in numero di frame (es. 2.0 / 0.05 = 40)
 is_waiting = False       # Stato: True se l'agente sta aspettando sul nodo
 wait_start_frame = 0     # Memoria del frame in cui è iniziata l'attesa
@@ -169,16 +169,16 @@ def line_intersects_rect(p1, p2, ox, oy, ow, oh):
 
 
 # Algoritmo PRM
-def generate_prm(start, goal, min_samples=50 , max_samples=500, k_neighbors=4):
+def generate_prm(start, goal, min_samples=100 , max_samples=1000, k_neighbors=5):
     print("Generazione PRM in corso...")
     samples = [start, goal]
 
-    # Inizializziamo subito il Grafo e aggiungiamo Partenza (0) e Arrivo (1)
+    # Inizializziamo subito il Grafo con Partenza (0) e Arrivo (1)
     G = nx.Graph()
     G.add_node(0, pos=start)
     G.add_node(1, pos=goal)
 
-    node_idx = 2  # Partiamo dall'indice 2 per i nuovi campioni
+    node_idx = 2  # Parte dall'indice 2
 
     # Generazione incrementale
     while node_idx < max_samples + 2:
@@ -210,15 +210,14 @@ def generate_prm(start, goal, min_samples=50 , max_samples=500, k_neighbors=4):
 
             node_idx += 1
 
-            # --- NOVITÀ: Controllo di Chiusura Anticipata ---
-            # Se abbiamo superato il minimo richiesto di campioni...
+            # Se viene superato il minimo richiesto di campioni
             if len(samples) >= min_samples + 2:
-                # ...controlliamo se i nodi 0 (Start) e 1 (Goal) sono finalmente connessi!
+                # verifica se i nodi 0 (Start) e 1 (Goal) sono connessi
                 if nx.has_path(G, 0, 1):
                     print(f"  -> Percorso trovato in anticipo al campione {len(samples) - 2}!")
                     break  # Interrompe il ciclo while e passa all'estrazione del percorso
 
-    # 4. Estrazione del percorso
+    # Estrazione del percorso
     try:
         path_indices = nx.shortest_path(G, source=0, target=1, weight='weight')
         path = [samples[i] for i in path_indices]
@@ -269,7 +268,7 @@ dist = dist + dist[::-1]
 if NUM_AGENTS % 2 != 0:
     dist.pop(int(len(dist) / 2))
 
-
+# Funzione di calcolo vincoli
 def bound(new_positions):
     global CONNECTIONS, DESIRED_DISTANCES
     DESIRED_DISTANCES.fill(0)
@@ -403,7 +402,6 @@ def calculate_escape_path(start_pos, target_pos):
     best_start = None
     min_ds = float('inf')
 
-    # NOVITÀ: Piano B se il drone è schiacciato nel margine
     best_start_fallback = None
     min_ds_fallback = float('inf')
 
@@ -426,7 +424,7 @@ def calculate_escape_path(start_pos, target_pos):
     if best_start is None:
         best_start = best_start_fallback
 
-    # Fai lo stesso per il bersaglio (il leader)
+    # Fa lo stesso per il bersaglio (il leader)
     best_target = None
     min_dt = float('inf')
     best_target_fallback = None
@@ -490,8 +488,7 @@ for u, v in PRM_GRAPH.edges():
     edge_segments.append([p1, p2])
 
 # Creazione della collezione di linee (archi del grafo)
-prm_edges_collection = LineCollection(edge_segments, colors='lightgray',
-                                      linewidths=0.5, alpha=0.3, zorder=0)
+prm_edges_collection = LineCollection(edge_segments, colors='black',linewidths=0.5, alpha=0.3, zorder=0)
 ax.add_collection(prm_edges_collection)
 prm_edges_collection.set_visible(False) # Nascosto di default
 
@@ -530,7 +527,6 @@ def update(frame):
 
     if t_idx < len(T):
 
-        # --- NOVITÀ: Logica di Attesa ---
         if is_waiting:
             # Controlla se è passato abbastanza tempo (frame) dall'inizio dell'attesa
             if frame - wait_start_frame >= WAIT_FRAMES:
@@ -555,7 +551,7 @@ def update(frame):
 
         # Comportamento a fine percorso
     else:
-        # TOPOLOGY_UPDATE_INTERVAL dovrebbe essere impostato a 20 nei tuoi parametri
+        # TOPOLOGY_UPDATE_INTERVAL dovrebbe essere impostato a 20 nei parametri
         if frame % TOPOLOGY_UPDATE_INTERVAL == 0:
             bound(positions)
 
@@ -574,6 +570,8 @@ def update(frame):
 
     agent_colors = []
 
+    leader_velocity = np.zeros(2)
+
     for i in range(NUM_AGENTS):
         f_rep = calculate_repulsive_force(positions[i], positions, i)
         f_obs = calculate_obstacle_force(positions[i], positions[0])
@@ -582,7 +580,7 @@ def update(frame):
         if i in SATELLITE_IDX:
             f_circ = calculate_circular_orbit_force(positions[i], positions[CIRC_CENTER_IDX], CIRC_RADIUS)
 
-            # --- INTELLIGENZA IBRIDA (PRM INDIVIDUALE) ---
+            # PRM INDIVIDUALE
             if len(satellite_paths[i]) > 0:
                 wp = satellite_paths[i][0]
                 dist_to_wp = np.linalg.norm(positions[i] - wp)
@@ -603,12 +601,12 @@ def update(frame):
             else:
                 total_force = f_form + f_circ + f_rep + f_obs
 
-                # --- NOVITÀ: Rilevamento Stallo Posizionale Infallibile ---
+                # Rilevamento Stallo Posizionale Infallibile
                 stall_timers[i] += 1
 
-                # Controlliamo la situazione ogni 40 frame (circa 2 secondi di simulazione)
+                # Controlla la situazione ogni 40 frame (circa 2 secondi di simulazione)
                 if stall_timers[i] >= 40:
-                    # Quanto si è mosso REALMENTE il drone negli ultimi 2 secondi?
+                    # Quanto si è mosso il drone negli ultimi 2 secondi?
                     dist_moved = np.linalg.norm(positions[i] - position_history[i])
                     dist_from_leader = np.linalg.norm(positions[i] - positions[CIRC_CENTER_IDX])
 
@@ -619,17 +617,24 @@ def update(frame):
                         if new_path:
                             satellite_paths[i] = new_path
 
-                    # Salviamo la posizione attuale per il prossimo controllo e resettiamo il timer
+                    # Salva la posizione attuale per il prossimo controllo e resettiamo il timer
                     position_history[i] = np.copy(positions[i])
                     stall_timers[i] = 0
 
-                velocity = limit_speed(total_force, MAX_SPEED * 1.5)
+                base_velocity = limit_speed(total_force, MAX_SPEED * 1.5)
+
+                # FEEDFORWARD
+                velocity = base_velocity + (leader_velocity * 0.60)
+
+                velocity = limit_speed(velocity, MAX_SPEED * 1.8)
 
         else:
             # Comportamento del leader principale
             f_global = f_target_global
             total_force = f_global + f_form + f_rep + f_obs
             velocity = limit_speed(total_force, MAX_SPEED)
+
+            leader_velocity = np.copy(velocity)
 
         new_positions[i] += velocity * DT
 
@@ -643,7 +648,7 @@ def update(frame):
     scat.set_offsets(positions)
     scat.set_color(agent_colors)
 
-    # --- Aggiornamento grafico (Aggiunta del percorso di fuga) ---
+    # Aggiunta del percorso di fuga
     for i in range(NUM_AGENTS):
         if i in SATELLITE_IDX and len(satellite_paths[i]) > 0:
             path_coords = [positions[i]] + satellite_paths[i]
@@ -661,7 +666,6 @@ def update(frame):
         else:
             line.set_data([], [])
 
-    # RICORDATI di restituire sat_path_lines nell'animazione!
     return [scat, target_plot, prm_line, prm_nodes_scatter, prm_edges_collection] + graph_lines + sat_path_lines
 
 
