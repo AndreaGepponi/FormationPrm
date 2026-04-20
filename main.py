@@ -66,6 +66,7 @@ wait_start_frame = 0     # Memoria del frame in cui è iniziata l'attesa
 satellite_paths = {i: [] for i in range(NUM_AGENTS)}
 position_history = np.zeros((NUM_AGENTS, 2))
 stall_timers = np.zeros(NUM_AGENTS)
+prm_timers = np.zeros(NUM_AGENTS) # NOVITÀ: Timer per evitare blocchi durante il PRM
 
 # Generazione Ostacoli Casuali
 def generate_random_obstacles(num_obs):
@@ -182,7 +183,7 @@ def generate_prm(start, goal, min_samples=100 , max_samples=1000, k_neighbors=5)
 
     # Generazione incrementale
     while node_idx < max_samples + 2:
-        # 1. Genera un punto sicuro
+        # Genera un punto sicuro
         pt = np.random.uniform([X_MIN, Y_MIN], [X_MAX, Y_MAX])
         safe = True
         for (ox, oy, ow, oh) in OBSTACLES:
@@ -194,14 +195,14 @@ def generate_prm(start, goal, min_samples=100 , max_samples=1000, k_neighbors=5)
             samples.append(pt.tolist())
             G.add_node(node_idx, pos=pt.tolist())
 
-            # 2. Calcola le distanze SOLO rispetto ai nodi già esistenti
+            # Calcola le distanze SOLO rispetto ai nodi già esistenti
             distances = []
             for j in range(node_idx):
                 d = np.linalg.norm(np.array(samples[node_idx]) - np.array(samples[j]))
                 distances.append((j, d))
             distances.sort(key=lambda x: x[1])
 
-            # 3. Collega il nuovo nodo ai suoi K vicini più prossimi
+            # Collega il nuovo nodo ai suoi K vicini più prossimi
             for j, d in distances[:k_neighbors]:
                 collision = any(
                     line_intersects_rect(samples[node_idx], samples[j], ox, oy, ow, oh) for ox, oy, ow, oh in OBSTACLES)
@@ -519,7 +520,8 @@ btn_nodes.on_clicked(toggle_nodes)
 
 # Ciclo di Aggiornamento
 def update(frame):
-    global positions, TARGET, t_idx, last_bound_frame, is_waiting, wait_start_frame, satellite_paths, position_history, stall_timers
+    global positions, TARGET, t_idx, last_bound_frame, is_waiting, wait_start_frame, satellite_paths,\
+        position_history, stall_timers, prm_timers
     centroid = positions[CIRC_CENTER_IDX]
     # Inizializza la cronologia posizioni al primissimo frame
     if frame == 0:
@@ -530,7 +532,7 @@ def update(frame):
         if is_waiting:
             # Controlla se è passato abbastanza tempo (frame) dall'inizio dell'attesa
             if frame - wait_start_frame >= WAIT_FRAMES:
-                is_waiting = False  # Fine attesa!
+                is_waiting = False  # Fine attesa
                 t_idx += 1  # Passa al nodo successivo
 
                 if t_idx < len(T):
@@ -545,7 +547,7 @@ def update(frame):
             dist_agent_to_target = np.linalg.norm(centroid - TARGET)
 
             if dist_agent_to_target < 0.5:
-                # Arrivato al waypoint! Inizia l'attesa invece di passare subito oltre
+                # Arrivato al waypoint Inizia l'attesa invece di passare subito oltre
                 is_waiting = True
                 wait_start_frame = frame
 
@@ -582,11 +584,22 @@ def update(frame):
 
             # PRM INDIVIDUALE
             if len(satellite_paths[i]) > 0:
+                #  Aggiorniamo il timer di percorrenza
+                prm_timers[i] += 1
+
+                # Se ci mette più di 3 secondi (60 frame) per toccare un singolo nodo, è bloccato!
+                if prm_timers[i] > 60:
+                    print(f"[{frame}] Satellite {i} bloccato lungo il PRM! Abortisco la rotta.")
+                    satellite_paths[i] = []  # Svuota la rotta
+                    prm_timers[i] = 0  # Azzera il timer
+                    continue  # Passa al prossimo frame per ricalcolare tutto
+
                 wp = satellite_paths[i][0]
                 dist_to_wp = np.linalg.norm(positions[i] - wp)
 
                 if dist_to_wp < 0.5:
                     satellite_paths[i].pop(0)
+                    prm_timers[i] = 0  # Nodo raggiunto: azzera il timer!
                     velocity = np.zeros(2)
                 else:
                     vec_to_wp = wp - positions[i]
@@ -595,7 +608,9 @@ def update(frame):
                     else:
                         f_wp = K_TARGET * HUBER_DELTA * (vec_to_wp / dist_to_wp)
 
-                    total_force = f_wp + f_rep + f_obs
+                    # Moltiplica f_wp per 2.0 e riduciamo f_rep al 50%
+                    # Così il drone "spingerà" via i compagni per salvarsi, senza farsi bloccare da loro
+                    total_force = (f_wp * 2.0) + (f_rep * 0.5) + f_obs
                     velocity = limit_speed(total_force, MAX_SPEED * 1.5)
 
             else:
