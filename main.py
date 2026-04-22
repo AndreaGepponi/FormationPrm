@@ -66,7 +66,7 @@ wait_start_frame = 0     # Memoria del frame in cui è iniziata l'attesa
 satellite_paths = {i: [] for i in range(NUM_AGENTS)}
 position_history = np.zeros((NUM_AGENTS, 2))
 stall_timers = np.zeros(NUM_AGENTS)
-prm_timers = np.zeros(NUM_AGENTS) # NOVITÀ: Timer per evitare blocchi durante il PRM
+prm_timers = np.zeros(NUM_AGENTS) # Timer per evitare blocchi durante il PRM
 
 # Generazione Ostacoli Casuali
 def generate_random_obstacles(num_obs):
