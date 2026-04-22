@@ -56,7 +56,7 @@ NUM_OBSTACLES = 9
 
 MAX_DIAG_STEPS = int(2 * SCALE_FACTOR)
 print('Numero diagonali:', min(MAX_DIAG_STEPS*2, NUM_AGENTS -4))
-TOPOLOGY_UPDATE_INTERVAL = 40
+TOPOLOGY_UPDATE_INTERVAL = 40   # Frequenza aggiornamento vincoli quando arriva all'ultimo waypoint
 MIN_FRAMES_BETWEEN_BOUNDS = 40  # 20 frame corrispondono a 1 secondo simulato (se DT=0.05 e intervallo=20ms)
 last_bound_frame = 0            # Memoria dell'ultimo frame in cui la topologia è stata aggiornata
 WAIT_TIME_SECONDS = 0.4         # Quanti secondi si ferma su ogni nodo
