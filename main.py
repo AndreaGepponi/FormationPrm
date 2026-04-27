@@ -39,7 +39,7 @@ K_OBS = 5.0 * SCALE_FACTOR
 K_CIRC_OUT = 4.0 * SCALE_FACTOR
 K_CIRC_IN = 1.5 * SCALE_FACTOR
 
-REP_RADIUS = 0.6
+REP_RADIUS = 0.5
 OBS_INFLUENCE = 0.6
 HUBER_DELTA = 1.0
 DANGER_OBS = 0.5
@@ -174,7 +174,7 @@ def generate_prm(start, goal, min_samples=100 , max_samples=1000, k_neighbors=5)
     print("Generazione PRM in corso...")
     samples = [start, goal]
 
-    # Inizializziamo subito il Grafo con Partenza (0) e Arrivo (1)
+    # Inizializza il Grafo con Partenza (0) e Arrivo (1)
     G = nx.Graph()
     G.add_node(0, pos=start)
     G.add_node(1, pos=goal)
@@ -383,7 +383,7 @@ def calculate_obstacle_force(pos, leader_pos):
             tangent_1 = np.array([-normal[1], normal[0]])
             tangent_2 = np.array([normal[1], -normal[0]])
 
-            # Uso tangente che punta maggiormente verso il leader
+            # Usa tangente che punta maggiormente verso il leader
             dir_to_leader = leader_pos - pos
             if np.dot(tangent_1, dir_to_leader) > 0:
                 tangent_force = rep_mag * tangent_1 * 0.8
@@ -527,7 +527,7 @@ def update(frame):
     if frame == 0:
         position_history = np.copy(positions)
 
-    if t_idx < len(T):
+    if t_idx < len(T): # Verifica se ha raggiunto l'ultimo waypoint
 
         if is_waiting:
             # Controlla se è passato abbastanza tempo (frame) dall'inizio dell'attesa
@@ -587,7 +587,7 @@ def update(frame):
                 #  Aggiorniamo il timer di percorrenza
                 prm_timers[i] += 1
 
-                # Se ci mette più di 3 secondi (60 frame) per toccare un singolo nodo, è bloccato!
+                # Se ci mette più di 3 secondi (60 frame) per toccare un singolo nodo è bloccato
                 if prm_timers[i] > 60:
                     print(f"[{frame}] Satellite {i} bloccato lungo il PRM! Abortisco la rotta.")
                     satellite_paths[i] = []  # Svuota la rotta
@@ -599,7 +599,7 @@ def update(frame):
 
                 if dist_to_wp < 0.5:
                     satellite_paths[i].pop(0)
-                    prm_timers[i] = 0  # Nodo raggiunto: azzera il timer!
+                    prm_timers[i] = 0  # Nodo raggiunto: azzera il timer
                     velocity = np.zeros(2)
                 else:
                     vec_to_wp = wp - positions[i]
@@ -608,7 +608,7 @@ def update(frame):
                     else:
                         f_wp = K_TARGET * HUBER_DELTA * (vec_to_wp / dist_to_wp)
 
-                    # Moltiplica f_wp per 2.0 e riduciamo f_rep al 50%
+                    # Moltiplica f_wp per 2.0 e riduce f_rep al 50%
                     # Così il drone "spingerà" via i compagni per salvarsi, senza farsi bloccare da loro
                     total_force = (f_wp * 2.0) + (f_rep * 0.5) + f_obs
                     velocity = limit_speed(total_force, MAX_SPEED * 1.5)
@@ -616,7 +616,6 @@ def update(frame):
             else:
                 total_force = f_form + f_circ + f_rep + f_obs
 
-                # Rilevamento Stallo Posizionale Infallibile
                 stall_timers[i] += 1
 
                 # Controlla la situazione ogni 40 frame (circa 2 secondi di simulazione)
@@ -631,7 +630,42 @@ def update(frame):
                         new_path = calculate_escape_path(positions[i], positions[CIRC_CENTER_IDX])
                         if new_path:
                             satellite_paths[i] = new_path
+                        else:
+                            print(f"[{frame}] Satellite {i}: PRM frammentato! Tentativo di evasione alla cieca sicura.")
 
+                            blind_escape_pt = None
+
+                            # Fa fino a 50 tentativi per trovare una direzione libera a 3 metri
+                            for _ in range(50):
+                                angle = np.random.uniform(0, 2 * math.pi)
+                                candidate_pt = positions[i] + np.array([math.cos(angle), math.sin(angle)]) * 3.0
+
+                                #Controlla che il punto non sia fuori dai bordi della mappa
+                                if not (X_MIN <= candidate_pt[0] <= X_MAX and Y_MIN <= candidate_pt[1] <= Y_MAX):
+                                    continue
+
+                                #Controlla che il punto e la linea per raggiungerlo siano sicuri
+                                is_safe = True
+                                for (ox, oy, ow, oh) in OBSTACLES:
+                                    # Controlla se il punto cade dentro un ostacolo
+                                    if (ox - 0.5) <= candidate_pt[0] <= (ox + ow + 0.5) and (oy - 0.5) <= candidate_pt[
+                                        1] <= (oy + oh + 0.5):
+                                        is_safe = False
+                                        break
+                                    # Controlla se la linea retta taglia un ostacolo
+                                    if line_intersects_rect(positions[i], candidate_pt, ox, oy, ow, oh):
+                                        is_safe = False
+                                        break
+
+                                if is_safe:
+                                    blind_escape_pt = candidate_pt
+                                    break  # Trovato un punto sicuro
+
+                            # Se dopo 50 tentativi è circondato e non trova 3 metri liberi, fa un passo di 1
+                            if blind_escape_pt is None:
+                                blind_escape_pt = positions[i] + np.random.uniform(-1, 1, 2) * SCALE_FACTOR
+
+                            satellite_paths[i] = [blind_escape_pt]
                     # Salva la posizione attuale per il prossimo controllo e resettiamo il timer
                     position_history[i] = np.copy(positions[i])
                     stall_timers[i] = 0
