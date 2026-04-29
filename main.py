@@ -327,7 +327,7 @@ def calculate_formation_force(pos, all_positions, agent_index):
                 if abs(error) <= HUBER_DELTA:
                     force_mag = -current_k * error
                 else:
-                    force_mag = -current_k * HUBER_DELTA * np.sign(error)
+                    force_mag = -current_k * HUBER_DELTA * np.sign(error) * SCALE_FACTOR
 
                 force += force_mag * (diff / dist) #Moltiplica intensità per direzione
     return force
@@ -344,7 +344,7 @@ def calculate_circular_orbit_force(pos, center_pos, radius):
     if abs(error) <= HUBER_DELTA:
         force_mag = -current_k * error
     else:
-        force_mag = -current_k * HUBER_DELTA * np.sign(error)
+        force_mag = -current_k * HUBER_DELTA * np.sign(error) * SCALE_FACTOR
 
     return force_mag * (diff / dist)
 
@@ -566,7 +566,7 @@ def update(frame):
         if dist_to_target <= HUBER_DELTA:
             f_target_global = K_TARGET * vector_to_target
         else:
-            f_target_global = K_TARGET * HUBER_DELTA * (vector_to_target / dist_to_target)
+            f_target_global = K_TARGET * HUBER_DELTA * (vector_to_target / dist_to_target) * SCALE_FACTOR
 
     agent_colors = []
 
@@ -604,7 +604,7 @@ def update(frame):
                     if dist_to_wp <= HUBER_DELTA:
                         f_wp = K_TARGET * vec_to_wp
                     else:
-                        f_wp = K_TARGET * HUBER_DELTA * (vec_to_wp / dist_to_wp)
+                        f_wp = K_TARGET * HUBER_DELTA * (vec_to_wp / dist_to_wp) * SCALE_FACTOR
 
                     # Moltiplica f_wp per 2.0 e riduce f_rep al 50%
                     # Così il drone "spingerà" via i compagni per salvarsi, senza farsi bloccare da loro
