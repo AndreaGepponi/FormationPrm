@@ -42,7 +42,6 @@ K_CIRC_IN = 1.5 * SCALE_FACTOR
 REP_RADIUS = 0.5
 OBS_INFLUENCE = 0.6
 HUBER_DELTA = 1.0
-DANGER_OBS = 0.5
 
 CIRC_CENTER_IDX = 0
 SATELLITE_IDX = list(range(1, NUM_AGENTS))
@@ -330,7 +329,7 @@ def calculate_formation_force(pos, all_positions, agent_index):
                 else:
                     force_mag = -current_k * HUBER_DELTA * np.sign(error)
 
-                force += force_mag * (diff / dist)
+                force += force_mag * (diff / dist) #Moltiplica intensità per direzione
     return force
 
 
@@ -523,7 +522,7 @@ def update(frame):
     global positions, TARGET, t_idx, last_bound_frame, is_waiting, wait_start_frame, satellite_paths,\
         position_history, stall_timers, prm_timers
     centroid = positions[CIRC_CENTER_IDX]
-    # Inizializza la cronologia posizioni al primissimo frame
+    # Inizializza la cronologia posizioni al primo frame
     if frame == 0:
         position_history = np.copy(positions)
 
@@ -547,13 +546,12 @@ def update(frame):
             dist_agent_to_target = np.linalg.norm(centroid - TARGET)
 
             if dist_agent_to_target < 0.5:
-                # Arrivato al waypoint Inizia l'attesa invece di passare subito oltre
+                # Arrivato al waypoint inizia l'attesa invece di passare subito oltre
                 is_waiting = True
                 wait_start_frame = frame
 
         # Comportamento a fine percorso
     else:
-        # TOPOLOGY_UPDATE_INTERVAL dovrebbe essere impostato a 20 nei parametri
         if frame % TOPOLOGY_UPDATE_INTERVAL == 0:
             bound(positions)
 
@@ -584,7 +582,7 @@ def update(frame):
 
             # PRM INDIVIDUALE
             if len(satellite_paths[i]) > 0:
-                #  Aggiorniamo il timer di percorrenza
+                #  Aggiorna il timer di percorrenza
                 prm_timers[i] += 1
 
                 # Se ci mette più di 3 secondi (60 frame) per toccare un singolo nodo è bloccato
@@ -630,7 +628,7 @@ def update(frame):
                         new_path = calculate_escape_path(positions[i], positions[CIRC_CENTER_IDX])
                         if new_path:
                             satellite_paths[i] = new_path
-                        else:
+                        else: #Il nodo più vicino al satellite è su una componente connessa separata
                             print(f"[{frame}] Satellite {i}: PRM frammentato! Tentativo di evasione alla cieca sicura.")
 
                             blind_escape_pt = None
@@ -666,7 +664,7 @@ def update(frame):
                                 blind_escape_pt = positions[i] + np.random.uniform(-1, 1, 2) * SCALE_FACTOR
 
                             satellite_paths[i] = [blind_escape_pt]
-                    # Salva la posizione attuale per il prossimo controllo e resettiamo il timer
+                    # Salva la posizione attuale per il prossimo controllo e resetta il timer
                     position_history[i] = np.copy(positions[i])
                     stall_timers[i] = 0
 
