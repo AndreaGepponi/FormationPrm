@@ -715,6 +715,38 @@ def update(frame):
 
     return [scat, target_plot, prm_line, prm_nodes_scatter, prm_edges_collection] + graph_lines + sat_path_lines
 
+# ==========================================
+# MODALITÀ TEST INTERATTIVO (Debug PRM)
+# ==========================================
+def on_right_click(event):
+    # Controlla che il click sia dentro l'area del grafico e che sia il Tasto Destro (button=3)
+    if event.inaxes != ax or event.button != 3:
+        return
+
+    global positions, position_history, satellite_paths, prm_timers
+
+    # Prende le coordinate del click
+    test_pos = np.array([event.xdata, event.ydata])
+    print(f"\n--- TEST PRM Forzato da coordinate [{test_pos[0]:.2f}, {test_pos[1]:.2f}] ---")
+
+    #Teletrasporta il Satellite 1 (indice 1) sul cursore del mouse
+    positions[1] = np.copy(test_pos)
+    position_history[1] = np.copy(test_pos)
+
+    #Richiama la funzione per calcolare la via di fuga verso il Leader (Agente 0)
+    test_path = calculate_escape_path(test_pos, positions[0])
+
+    #Assegna il risultato al satellite
+    if test_path:
+        print(f" -> Successo! Trovato un percorso di {len(test_path)} nodi.")
+        satellite_paths[1] = test_path
+        prm_timers[1] = 0  #Azzera il timer per dargli il tempo di partire
+    else:
+        print(" -> FALLIMENTO: La funzione ha restituito una lista vuota da questa posizione.")
+
+
+#Collega la funzione agli eventi del mouse della finestra di Matplotlib
+fig.canvas.mpl_connect('button_press_event', on_right_click)
 
 if __name__ == '__main__':
     ani = animation.FuncAnimation(fig, update, frames=MAX_STEPS, interval=20, blit=True)
